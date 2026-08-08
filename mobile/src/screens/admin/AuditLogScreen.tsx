@@ -121,6 +121,7 @@ const makeStyles = (colors: ThemeColors) =>
       fontSize: 13,
       fontWeight: '700',
       letterSpacing: 0.3,
+      flex: 1,
     },
     time: {
       color: colors.textDim,

@@ -10,12 +10,15 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef } from 'react';
-import { ActivityIndicator, Animated, Platform, StyleSheet, View } from 'react-native';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
+import LoadingScreen from '../components/LoadingScreen';
 import { HeaderActions } from '../components/UI';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { gradients, ThemeColors } from '../lib/theme';
+import { Role } from '../lib/types';
 
+import BookScreen from '../screens/auth/BookScreen';
 import CenterLoginScreen from '../screens/auth/CenterLoginScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
 import SignUpScreen from '../screens/auth/SignUpScreen';
@@ -40,7 +43,8 @@ import ExamsScreen from '../screens/admin/ExamsScreen';
 import PrintPreviewScreen from '../screens/admin/PrintPreviewScreen';
 
 export type AuthStackParamList = {
-  Login: undefined;
+  Book: undefined;
+  Login: { initialRole?: Role } | undefined;
   SignUp: undefined;
   CenterLogin: undefined;
 };
@@ -264,13 +268,7 @@ export default function RootNavigator() {
   const navTheme = useMemo(() => navThemeFor(colors, isDark), [colors, isDark]);
 
   if (loading) {
-    return (
-      <View
-        style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}
-      >
-        <ActivityIndicator size="large" color={colors.primary} />
-      </View>
-    );
+    return <LoadingScreen />;
   }
 
   return (
@@ -283,6 +281,7 @@ export default function RootNavigator() {
             animation: 'fade',
           }}
         >
+          <AuthStack.Screen name="Book" component={BookScreen} />
           <AuthStack.Screen name="Login" component={LoginScreen} />
           <AuthStack.Screen name="SignUp" component={SignUpScreen} />
           <AuthStack.Screen name="CenterLogin" component={CenterLoginScreen} />

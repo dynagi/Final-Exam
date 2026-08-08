@@ -5,6 +5,7 @@
  * Screens build their StyleSheet with a `makeStyles(colors)` factory and
  * memoize it on `colors`, so flipping the mode re-themes the whole app.
  */
+import { Platform } from 'react-native';
 
 export interface ThemeColors {
   bg: string;
@@ -39,60 +40,62 @@ export interface ThemeColors {
   mesh: readonly [string, string, string];
 }
 
+/** "Ink desk at night" — a leather-and-lamplight study. */
 export const darkColors: ThemeColors = {
-  bg: '#060B16',
-  bgElevated: '#0A1322',
-  surface: '#0E1729',
-  surfaceAlt: '#15213A',
-  border: '#1F2D4A',
-  borderLight: '#2C3E63',
-  text: '#EDF2FC',
-  textDim: '#8DA2C6',
-  textFaint: '#5C6E91',
-  primary: '#5B8DF8',
-  primaryDark: '#3B6FE0',
-  primarySoft: 'rgba(91, 141, 248, 0.14)',
-  accent: '#22D3EE',
-  violet: '#8B5CF6',
-  success: '#34D399',
-  warning: '#FBBF24',
-  danger: '#F87171',
-  info: '#38BDF8',
-  gold: '#FBBF24',
-  onAccent: '#FFFFFF',
-  backdrop: 'rgba(2, 6, 14, 0.72)',
-  glass: 'rgba(20, 31, 54, 0.55)',
-  glassBorder: 'rgba(146, 180, 255, 0.16)',
+  bg: '#1B140D',
+  bgElevated: '#241B12',
+  surface: '#2A2014',
+  surfaceAlt: '#332615',
+  border: '#4A3826',
+  borderLight: '#5C4630',
+  text: '#EDE0C8',
+  textDim: '#B8A67E',
+  textFaint: '#8A7856',
+  primary: '#6E9BD6',
+  primaryDark: '#4A7AB8',
+  primarySoft: 'rgba(110, 155, 214, 0.16)',
+  accent: '#D8B85C',
+  violet: '#B08A5C',
+  success: '#5FA876',
+  warning: '#D8B85C',
+  danger: '#D96B6B',
+  info: '#6E9BD6',
+  gold: '#D8B85C',
+  onAccent: '#1B140D',
+  backdrop: 'rgba(10, 7, 4, 0.72)',
+  glass: 'rgba(42, 32, 20, 0.62)',
+  glassBorder: 'rgba(216, 184, 92, 0.22)',
   blurTint: 'dark',
-  mesh: ['rgba(91,141,248,0.30)', 'rgba(139,92,246,0.26)', 'rgba(34,211,238,0.22)'],
+  mesh: ['rgba(216,184,92,0.20)', 'rgba(139,46,46,0.16)', 'rgba(110,155,214,0.14)'],
 };
 
+/** "Exam-hall daylight" — bright ivory paper, ink and wax-seal accents. */
 export const lightColors: ThemeColors = {
-  bg: '#F4F6FB',
-  bgElevated: '#FFFFFF',
-  surface: '#FFFFFF',
-  surfaceAlt: '#EEF2FA',
-  border: '#DCE3F0',
-  borderLight: '#C6D2E6',
-  text: '#0F1B33',
-  textDim: '#5A6B8C',
-  textFaint: '#8A99B6',
-  primary: '#2F6BF6',
-  primaryDark: '#1E54D8',
-  primarySoft: 'rgba(47, 107, 246, 0.10)',
-  accent: '#0EA5C4',
-  violet: '#7C3AED',
-  success: '#0E9F6E',
-  warning: '#D97706',
-  danger: '#DC2626',
-  info: '#0284C7',
-  gold: '#D97706',
-  onAccent: '#FFFFFF',
-  backdrop: 'rgba(15, 27, 51, 0.35)',
-  glass: 'rgba(255, 255, 255, 0.62)',
-  glassBorder: 'rgba(255, 255, 255, 0.7)',
+  bg: '#F2EAD3',
+  bgElevated: '#FBF7EC',
+  surface: '#FBF7EC',
+  surfaceAlt: '#F0E6C8',
+  border: '#D8C9A0',
+  borderLight: '#C7B686',
+  text: '#2E2417',
+  textDim: '#6B5A3E',
+  textFaint: '#9C8B68',
+  primary: '#2A4B7C',
+  primaryDark: '#1D3557',
+  primarySoft: 'rgba(42, 75, 124, 0.10)',
+  accent: '#A9812F',
+  violet: '#6B4423',
+  success: '#2F6B3F',
+  warning: '#B8860B',
+  danger: '#8B2E2E',
+  info: '#2A4B7C',
+  gold: '#A9812F',
+  onAccent: '#FBF7EC',
+  backdrop: 'rgba(46, 36, 23, 0.42)',
+  glass: 'rgba(251, 247, 236, 0.72)',
+  glassBorder: 'rgba(169, 129, 47, 0.35)',
   blurTint: 'light',
-  mesh: ['rgba(47,107,246,0.18)', 'rgba(124,58,237,0.16)', 'rgba(14,165,196,0.14)'],
+  mesh: ['rgba(169,129,47,0.16)', 'rgba(139,46,46,0.10)', 'rgba(42,75,124,0.08)'],
 };
 
 export type ThemeMode = 'light' | 'dark';
@@ -103,11 +106,19 @@ export function paletteFor(mode: ThemeMode): ThemeColors {
 
 /** Gradient pairs used by buttons, chips and brand marks (work on both modes). */
 export const gradients = {
-  primary: ['#4F7DF7', '#8B5CF6'] as const,
-  success: ['#0EA56F', '#34D399'] as const,
-  danger: ['#EF4444', '#F87171'] as const,
-  brand: ['#22D3EE', '#5B8DF8', '#8B5CF6'] as const,
+  primary: ['#2A4B7C', '#4A7AB8'] as const,
+  success: ['#2F6B3F', '#5FA876'] as const,
+  danger: ['#8B2E2E', '#B8453F'] as const,
+  /** Wax-seal ribbon — crimson to antique gold, used for logos and gradient titles. Kept dark enough to stay legible as text on both the cream and ink backgrounds. */
+  brand: ['#8B2E2E', '#A9812F', '#8A6D23'] as const,
 };
+
+/** Book/newsletter serif — used for titles, section headers and stamped labels. */
+export const serif = Platform.select({
+  ios: 'Georgia',
+  android: 'serif',
+  default: 'Georgia, "Times New Roman", serif',
+});
 
 export const spacing = {
   xs: 4,

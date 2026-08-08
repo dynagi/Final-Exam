@@ -10,10 +10,13 @@ export interface GradientTextProps {
 /** Web: real gradient text via CSS background-clip on a DOM span. */
 export default function GradientText({
   children,
-  colors = ['#4F7DF7', '#8B5CF6'],
+  colors = ['#8B2E2E', '#A9812F', '#D8B85C'],
   style,
 }: GradientTextProps) {
   const f = (StyleSheet.flatten(style) || {}) as TextStyle;
+  const glow = f.textShadowColor
+    ? `0 0 ${f.textShadowRadius ?? 12}px ${String(f.textShadowColor)}`
+    : undefined;
   const css: Record<string, unknown> = {
     backgroundImage: `linear-gradient(95deg, ${colors.join(', ')})`,
     WebkitBackgroundClip: 'text',
@@ -24,6 +27,7 @@ export default function GradientText({
     letterSpacing: f.letterSpacing,
     lineHeight: f.lineHeight,
     fontFamily: f.fontFamily,
+    textShadow: glow,
     margin: 0,
     display: 'inline-block',
   };

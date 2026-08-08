@@ -1,31 +1,33 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import React, { useMemo, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useState } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Aurora } from '../../components/Aurora';
-import GradientText from '../../components/GradientText';
-import { Button, Input, RolePicker, ThemeToggle } from '../../components/UI';
+import {
+  BookBadge,
+  BookBanner,
+  BookInput,
+  BookSpread,
+  GOLD,
+  INK,
+  INK_DIM,
+  QuillAndScroll,
+  SealButton,
+} from '../../components/BookUI';
+import { ThemeToggle } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { gradients, radius, spacing, ThemeColors } from '../../lib/theme';
-import { Role } from '../../lib/types';
+import { serif } from '../../lib/theme';
+import { Role, ROLE_LABEL } from '../../lib/types';
 import type { AuthStackParamList } from '../../navigation/RootNavigator';
+
+const ROLES: Role[] = ['teacher', 'paper_setter', 'admin'];
 
 export default function SignUpScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signUp } = useAuth();
   const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [role, setRole] = useState<Role>('teacher');
   const [fullName, setFullName] = useState('');
@@ -52,115 +54,130 @@ export default function SignUpScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Aurora />
-      <View style={styles.topBar}>
-        <ThemeToggle />
-      </View>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={{ flex: 1 }}
-      >
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <GradientText colors={gradients.brand} style={styles.title}>Create account</GradientText>
-          <Text style={styles.subtitle}>Choose the role this account will hold.</Text>
+    <View style={[styles.root, { backgroundColor: colors.bg }]}>
+      <SafeAreaView style={styles.flex}>
+        <View style={styles.topBar}>
+          <View />
+          <ThemeToggle />
+        </View>
 
-          <RolePicker value={role} onChange={setRole} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <BookBanner />
 
-          <View style={styles.demoBanner}>
-            <Ionicons name="information-circle" size={18} color={colors.info} />
-            <Text style={styles.demoText}>
-              Demo mode: roles are self-selected. In production, accounts are provisioned
-              invite-only by the examination board.
-            </Text>
-          </View>
+            <BookSpread
+              left={
+                <View style={pageStyles.center}>
+                  <BookBadge icon="person-add" gradient={['#2F6B3F', '#5FA876']} glowColor="#2F6B3F" />
+                  <Text style={pageStyles.title}>Join Secure Exam</Text>
+                  <Text style={pageStyles.subtitle}>Create Your Account{'\n'}Roles are provisioned invite-only in production</Text>
+                  <View style={pageStyles.flexSpace} />
+                  <QuillAndScroll />
+                </View>
+              }
+              right={
+                <View>
+                  <Text style={pageStyles.portalTitle}>New Account Registration</Text>
+                  <Text style={pageStyles.portalHint}>Choose the role this account will hold.</Text>
 
-          <Input label="Full name" placeholder="Dr. A. Sharma" value={fullName} onChangeText={setFullName} />
-          <Input
-            label="Email"
-            placeholder="you@example.com"
-            autoCapitalize="none"
-            keyboardType="email-address"
-            value={email}
-            onChangeText={setEmail}
-          />
-          <Input
-            label="Password (min 8 chars)"
-            placeholder="••••••••"
-            secureTextEntry
-            value={password}
-            onChangeText={setPassword}
-          />
+                  <View style={pageStyles.roleRow}>
+                    {ROLES.map((r) => {
+                      const active = r === role;
+                      return (
+                        <Pressable key={r} onPress={() => setRole(r)} style={[pageStyles.roleTab, active && pageStyles.roleTabActive]}>
+                          <Text style={[pageStyles.roleTabText, active && pageStyles.roleTabTextActive]}>{ROLE_LABEL[r]}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+                  <View style={pageStyles.demoBanner}>
+                    <Ionicons name="information-circle-outline" size={14} color={INK_DIM} />
+                    <Text style={pageStyles.demoText}>
+                      Demo mode: roles are self-selected. In production, accounts are provisioned invite-only.
+                    </Text>
+                  </View>
 
-          <Button title="Create Account" icon="person-add-outline" onPress={() => void handleSignUp()} loading={busy} />
+                  <BookInput icon="person-circle-outline" label="Full Name" placeholder="Dr. A. Sharma" value={fullName} onChangeText={setFullName} />
+                  <BookInput
+                    icon="person-outline"
+                    label="Email"
+                    placeholder="you@example.com"
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    value={email}
+                    onChangeText={setEmail}
+                  />
+                  <BookInput
+                    icon="lock-closed-outline"
+                    label="Password (min 8 chars)"
+                    placeholder="••••••••"
+                    secureTextEntry
+                    value={password}
+                    onChangeText={setPassword}
+                  />
 
-          <Pressable onPress={() => navigation.goBack()} style={styles.linkWrap}>
-            <Text style={styles.link}>
-              Already registered? <Text style={{ color: colors.primary }}>Sign in</Text>
-            </Text>
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+                  {error ? <Text style={pageStyles.error}>{error}</Text> : null}
+
+                  <View style={pageStyles.sealWrap}>
+                    <SealButton title="Create Account" icon="person-add-outline" onPress={() => void handleSignUp()} loading={busy} />
+                  </View>
+
+                  <Pressable onPress={() => navigation.navigate('Login')} style={pageStyles.linkWrap}>
+                    <Text style={pageStyles.link}>
+                      Already registered? <Text style={pageStyles.linkStrong}>Sign in</Text>
+                    </Text>
+                  </Pressable>
+                </View>
+              }
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
-  StyleSheet.create({
-    safe: {
-      flex: 1,
-      backgroundColor: colors.bg,
-    },
-    topBar: {
-      flexDirection: 'row',
-      justifyContent: 'flex-end',
-      paddingHorizontal: spacing.md,
-      paddingTop: spacing.sm,
-    },
-    content: {
-      padding: spacing.xl,
-      paddingTop: spacing.lg,
-    },
-    title: {
-      color: colors.text,
-      fontSize: 24,
-      fontWeight: '800',
-    },
-    subtitle: {
-      color: colors.textDim,
-      fontSize: 13,
-      marginTop: 4,
-      marginBottom: spacing.lg,
-    },
-    demoBanner: {
-      flexDirection: 'row',
-      gap: spacing.sm,
-      backgroundColor: `${colors.info}14`,
-      borderColor: `${colors.info}44`,
-      borderWidth: 1,
-      borderRadius: radius.sm,
-      padding: spacing.md,
-      marginBottom: spacing.lg,
-    },
-    demoText: {
-      color: colors.textDim,
-      fontSize: 12,
-      flex: 1,
-      lineHeight: 17,
-    },
-    error: {
-      color: colors.danger,
-      fontSize: 13,
-      marginBottom: spacing.md,
-    },
-    linkWrap: {
-      marginTop: spacing.lg,
-      alignItems: 'center',
-    },
-    link: {
-      color: colors.textDim,
-      fontSize: 14,
-    },
-  });
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  flex: { flex: 1 },
+  topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
+  content: { alignItems: 'center', padding: 16, paddingBottom: 40 },
+});
+
+const pageStyles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center' },
+  flexSpace: { flex: 1 },
+  title: { fontFamily: serif, fontWeight: '700', fontSize: 20, color: INK, textAlign: 'center' },
+  subtitle: { fontFamily: serif, fontSize: 13, color: INK_DIM, textAlign: 'center', marginTop: 8, lineHeight: 19 },
+  portalTitle: { fontFamily: serif, fontWeight: '700', fontSize: 19, color: INK, marginBottom: 4 },
+  portalHint: { fontFamily: serif, fontSize: 12, color: INK_DIM, marginBottom: 12 },
+  roleRow: { flexDirection: 'row', gap: 8, marginBottom: 12 },
+  roleTab: {
+    flex: 1,
+    paddingVertical: 9,
+    alignItems: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(59,46,31,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  roleTabActive: { borderColor: GOLD, backgroundColor: `${GOLD}26` },
+  roleTabText: { fontFamily: serif, fontSize: 11, fontWeight: '700', color: INK_DIM },
+  roleTabTextActive: { color: INK },
+  demoBanner: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(59,46,31,0.06)',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
+  },
+  demoText: { fontFamily: serif, fontSize: 11, color: INK_DIM, flex: 1, lineHeight: 15 },
+  error: { fontFamily: serif, color: '#8B2E2E', fontSize: 12, marginBottom: 12 },
+  sealWrap: { marginTop: 4, marginBottom: 18 },
+  linkWrap: { alignItems: 'center' },
+  link: { fontFamily: serif, fontSize: 12, color: INK_DIM },
+  linkStrong: { fontWeight: '700', color: GOLD },
+});

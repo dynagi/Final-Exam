@@ -15,7 +15,8 @@
  *    Note: the crypto server must be reachable on your LAN — start it with
  *    `npm start` and allow Node through the firewall on port 4000.
  */
-import { NativeModules, Platform } from 'react-native';
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
 
 export const SUPABASE_URL = 'https://avlardakttkdnfltnape.supabase.co';
 export const SUPABASE_ANON_KEY = 'sb_publishable_LXPH1JifMnDAK51wf_SSJA_tUHRTUjo';
@@ -24,20 +25,20 @@ const CRYPTO_PORT = 4000;
 
 /**
  * On a physical phone (Expo Go) the dev machine is NOT reachable at localhost
- * or the Android-emulator alias 10.0.2.2 — only at the PC's LAN IP. Metro
- * already served the JS bundle to the phone from that exact IP, so we recover
- * it from the bundle URL (e.g. http://192.168.1.5:8081/index.bundle) and reuse
- * it for the crypto service. This makes scanning "just work" on a real device
- * with no manual IP editing; emulators/simulators fall back below.
+ * or the Android-emulator alias 10.0.2.2 — only at the PC's LAN IP.
+ * expo-constants exposes debuggerHost ("192.168.x.x:8081") in Expo Go dev
+ * builds, which is the reliable way to recover the Metro server's IP.
+ * Emulators/simulators fall through to their loopback aliases.
  */
-function lanHostFromBundle(): string | null {
-  const url: string = (NativeModules as { SourceCode?: { scriptURL?: string } })?.SourceCode?.scriptURL ?? '';
-  const host = /^https?:\/\/([^/:]+)(?::\d+)?\//.exec(url)?.[1];
-  if (!host || host === 'localhost' || host === '127.0.0.1') return null;
-  return host;
+function lanHostFromConstants(): string | null {
+  const debuggerHost: string | undefined = Constants.expoGoConfig?.debuggerHost;
+  if (!debuggerHost) return null;
+  const ip = debuggerHost.split(':')[0];
+  if (!ip || ip === 'localhost' || ip === '127.0.0.1') return null;
+  return ip;
 }
 
-const lanHost = Platform.OS === 'web' ? null : lanHostFromBundle();
+const lanHost = Platform.OS === 'web' ? null : lanHostFromConstants();
 // Emulator/simulator fallbacks when no LAN IP is available.
 const fallback = Platform.OS === 'ios' ? '127.0.0.1' : '10.0.2.2';
 

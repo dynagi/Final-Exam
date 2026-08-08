@@ -1,23 +1,29 @@
-import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LinearGradient } from 'expo-linear-gradient';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Aurora } from '../../components/Aurora';
-import GradientText from '../../components/GradientText';
-import { Button, Input, ThemeToggle } from '../../components/UI';
+import {
+  BookBadge,
+  BookBanner,
+  BookInput,
+  BookSpread,
+  GOLD,
+  INK,
+  INK_DIM,
+  QuillAndScroll,
+  SealButton,
+} from '../../components/BookUI';
+import { ThemeToggle } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
-import { gradients, spacing, ThemeColors } from '../../lib/theme';
+import { serif } from '../../lib/theme';
 import type { AuthStackParamList } from '../../navigation/RootNavigator';
 
 export default function CenterLoginScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signInCenter } = useAuth();
   const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
 
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -41,64 +47,89 @@ export default function CenterLoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <Aurora />
-      <View style={styles.topBar}>
-        <ThemeToggle />
-      </View>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-          <View style={styles.logoWrap}>
-            <LinearGradient colors={gradients.brand} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.logoBadge}>
-              <Ionicons name="qr-code" size={32} color="#fff" />
-            </LinearGradient>
-            <GradientText colors={gradients.brand} style={styles.title}>Center Login</GradientText>
-            <Text style={styles.subtitle}>
-              Invigilator scan-in. Use the center code and password issued by the Admin.
-            </Text>
-          </View>
+    <View style={[styles.root, { backgroundColor: colors.bg }]}>
+      <SafeAreaView style={styles.flex}>
+        <View style={styles.topBar}>
+          <View />
+          <ThemeToggle />
+        </View>
 
-          <Input
-            label="Center code"
-            placeholder="e.g. DL-014"
-            autoCapitalize="characters"
-            value={code}
-            onChangeText={setCode}
-          />
-          <Input label="Center password" placeholder="••••••••" secureTextEntry value={password} onChangeText={setPassword} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <BookBanner />
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+            <BookSpread
+              left={
+                <View style={pageStyles.center}>
+                  <BookBadge icon="qr-code" gradient={['#8B2E2E', '#B8453F']} glowColor="#8B2E2E" />
+                  <Text style={pageStyles.title}>Exam Center Access</Text>
+                  <Text style={pageStyles.subtitle}>Invigilator Login{'\n'}Scan-in Authentication is Required</Text>
+                  <View style={pageStyles.flexSpace} />
+                  <QuillAndScroll />
+                </View>
+              }
+              right={
+                <View>
+                  <Text style={pageStyles.portalTitle}>System Access Portal</Text>
+                  <Text style={pageStyles.portalHint}>
+                    Use the center code and password issued by the Admin.
+                  </Text>
 
-          <Button title="Sign In to Scan" icon="log-in-outline" onPress={() => void submit()} loading={busy} />
+                  <BookInput
+                    icon="business-outline"
+                    label="Center Code"
+                    placeholder="e.g. DL-014"
+                    autoCapitalize="characters"
+                    value={code}
+                    onChangeText={setCode}
+                  />
+                  <BookInput
+                    icon="lock-closed-outline"
+                    label="Center Password"
+                    placeholder="••••••••"
+                    secureTextEntry
+                    value={password}
+                    onChangeText={setPassword}
+                  />
 
-          <Pressable onPress={() => navigation.goBack()} style={styles.linkWrap}>
-            <Text style={styles.link}>
-              Staff member? <Text style={{ color: colors.primary }}>Use the main login</Text>
-            </Text>
-          </Pressable>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </SafeAreaView>
+                  {error ? <Text style={pageStyles.error}>{error}</Text> : null}
+
+                  <View style={pageStyles.sealWrap}>
+                    <SealButton title="Sign In to Scan" icon="qr-code-outline" onPress={() => void submit()} loading={busy} />
+                  </View>
+
+                  <Pressable onPress={() => navigation.navigate('Login')} style={pageStyles.linkWrap}>
+                    <Text style={pageStyles.link}>
+                      Staff member? <Text style={pageStyles.linkStrong}>Use the main login</Text>
+                    </Text>
+                  </Pressable>
+                </View>
+              }
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
-  StyleSheet.create({
-    safe: { flex: 1, backgroundColor: colors.bg },
-    topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: spacing.md, paddingTop: spacing.sm },
-    content: { padding: spacing.xl, paddingTop: spacing.xl },
-    logoWrap: { alignItems: 'center', marginBottom: spacing.xl },
-    logoBadge: {
-      width: 72,
-      height: 72,
-      borderRadius: 22,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: spacing.md,
-    },
-    title: { color: colors.text, fontSize: 24, fontWeight: '800' },
-    subtitle: { color: colors.textDim, fontSize: 13, marginTop: 4, textAlign: 'center', lineHeight: 19 },
-    error: { color: colors.danger, fontSize: 13, marginBottom: spacing.md },
-    linkWrap: { marginTop: spacing.lg, alignItems: 'center' },
-    link: { color: colors.textDim, fontSize: 14 },
-  });
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+  flex: { flex: 1 },
+  topBar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 12, paddingTop: 8 },
+  content: { alignItems: 'center', padding: 16, paddingBottom: 40 },
+});
+
+const pageStyles = StyleSheet.create({
+  center: { flex: 1, alignItems: 'center' },
+  flexSpace: { flex: 1 },
+  title: { fontFamily: serif, fontWeight: '700', fontSize: 20, color: INK, textAlign: 'center' },
+  subtitle: { fontFamily: serif, fontSize: 13, color: INK_DIM, textAlign: 'center', marginTop: 8, lineHeight: 19 },
+  portalTitle: { fontFamily: serif, fontWeight: '700', fontSize: 19, color: INK, marginBottom: 4 },
+  portalHint: { fontFamily: serif, fontSize: 12, color: INK_DIM, marginBottom: 16, lineHeight: 17 },
+  error: { fontFamily: serif, color: '#8B2E2E', fontSize: 12, marginBottom: 12 },
+  sealWrap: { marginTop: 4, marginBottom: 18 },
+  linkWrap: { alignItems: 'center' },
+  link: { fontFamily: serif, fontSize: 12, color: INK_DIM },
+  linkStrong: { fontWeight: '700', color: GOLD },
+});

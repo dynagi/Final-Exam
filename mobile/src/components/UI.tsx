@@ -5,6 +5,7 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import {
   ActivityIndicator,
   Animated,
+  Easing,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -21,11 +22,12 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
-import { gradients, labelFor, radius, spacing, ThemeColors, toneFor } from '../lib/theme';
+import { gradients, labelFor, radius, serif, spacing, ThemeColors, toneFor } from '../lib/theme';
 import { Exam, Role, ROLE_LABEL } from '../lib/types';
 import { PressableIcon, Reveal, Tappable, useCountUp, useFloat, usePressableScale, usePulse } from './anim';
 import { Aurora } from './Aurora';
 import GradientText from './GradientText';
+import { HudFrame } from './HudFrame';
 
 /** Shared hook: memoized themed styles for any component in this file. */
 function useStyles() {
@@ -94,12 +96,15 @@ export function Card({
   glass = false,
   delay = 0,
   reveal = true,
+  hud = false,
 }: {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
   glass?: boolean;
   delay?: number;
   reveal?: boolean;
+  /** Sci-fi corner brackets, for the flagship/console-style cards. */
+  hud?: boolean;
 }) {
   const { styles } = useStyles();
   const hover = useRef(new Animated.Value(0)).current;
@@ -113,6 +118,7 @@ export function Card({
       style={[styles.card, glass && styles.cardGlass, { transform: [{ translateY }] }, style]}
     >
       {children}
+      {hud ? <HudFrame inset={-1} /> : null}
     </Animated.View>
   );
 
@@ -214,6 +220,7 @@ export function Button({
             style={StyleSheet.absoluteFill}
           />
         ) : null}
+        {gradient && !disabled && !loading ? <ButtonShimmer /> : null}
         {loading ? (
           <ActivityIndicator color={fg} />
         ) : (
@@ -224,6 +231,43 @@ export function Button({
         )}
       </Pressable>
     </Animated.View>
+  );
+}
+
+/** Diagonal light band that continuously sweeps across a filled button — the "console" shimmer. */
+function ButtonShimmer() {
+  const [width, setWidth] = React.useState(220);
+  const t = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(t, { toValue: 1, duration: 2600, easing: Easing.linear, useNativeDriver: true }),
+        Animated.timing(t, { toValue: 0, duration: 0, useNativeDriver: true }),
+        Animated.delay(900),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [t]);
+
+  const translateX = t.interpolate({ inputRange: [0, 1], outputRange: [-width * 0.6, width * 1.2] });
+
+  return (
+    <View
+      style={StyleSheet.absoluteFill}
+      pointerEvents="none"
+      onLayout={(e) => setWidth(e.nativeEvent.layout.width || width)}
+    >
+      <Animated.View style={{ position: 'absolute', top: 0, bottom: 0, width: width * 0.28, transform: [{ translateX }, { skewX: '-18deg' }] }}>
+        <LinearGradient
+          colors={['transparent', 'rgba(255,255,255,0.35)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={{ flex: 1 }}
+        />
+      </Animated.View>
+    </View>
   );
 }
 
@@ -419,16 +463,31 @@ export function Stepper({
 
 const ALARMING = ['missing', 'leaked', 'critical'];
 
+/** Stamp-in mount animation: badges land like a rubber stamp being pressed onto paper. */
+function useStampIn() {
+  const t = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const anim = Animated.spring(t, { toValue: 1, useNativeDriver: true, speed: 16, bounciness: 9 });
+    anim.start();
+    return () => anim.stop();
+  }, [t]);
+  const scale = t.interpolate({ inputRange: [0, 1], outputRange: [1.7, 1] });
+  const rotate = t.interpolate({ inputRange: [0, 1], outputRange: ['-6deg', '-1.5deg'] });
+  const opacity = t.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 1] });
+  return { transform: [{ scale }, { rotate }], opacity };
+}
+
 export function Badge({ status }: { status: string }) {
   const { colors, styles } = useStyles();
   const tone = toneFor(colors, status);
   const pulse = usePulse(1, 1.6, 800);
+  const stamp = useStampIn();
   const alarming = ALARMING.includes(status);
   return (
-    <View style={[styles.badge, { backgroundColor: `${tone}1F`, borderColor: `${tone}55` }]}>
+    <Animated.View style={[styles.badge, { backgroundColor: `${tone}1A`, borderColor: `${tone}66` }, stamp]}>
       <Animated.View style={[styles.badgeDot, { backgroundColor: tone }, alarming && pulse]} />
       <Text style={[styles.badgeText, { color: tone }]}>{labelFor(status).toUpperCase()}</Text>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -671,7 +730,7 @@ const makeStyles = (colors: ThemeColors) =>
     },
     sectionTitleLeft: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     sectionBar: { width: 4, height: 16, borderRadius: 2 },
-    sectionTitle: { fontSize: 16, fontWeight: '800', letterSpacing: 0.2 },
+    sectionTitle: { fontFamily: serif, fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
     empty: { alignItems: 'center', padding: spacing.xl, gap: spacing.sm },
     emptyIconWrap: {
       width: 76,
@@ -715,7 +774,15 @@ const makeStyles = (colors: ThemeColors) =>
       paddingVertical: 12,
       fontSize: 15,
     },
-    inputFocused: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+    inputFocused: {
+      borderColor: colors.accent,
+      backgroundColor: colors.primarySoft,
+      shadowColor: colors.accent,
+      shadowOffset: { width: 0, height: 0 },
+      shadowOpacity: 0.5,
+      shadowRadius: 10,
+      elevation: 4,
+    },
     stepperRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     stepperBtn: {
       width: 48,
@@ -784,15 +851,15 @@ const makeStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       alignItems: 'center',
       gap: 6,
-      borderWidth: 1,
+      borderWidth: 1.5,
       borderRadius: 999,
       paddingHorizontal: 10,
       paddingVertical: 4,
       alignSelf: 'flex-start',
     },
     badgeDot: { width: 6, height: 6, borderRadius: 3 },
-    badgeText: { fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-    statFlex: { flex: 1 },
+    badgeText: { fontFamily: serif, fontSize: 11, fontWeight: '700', letterSpacing: 0.8 },
+    statFlex: { flexGrow: 1, flexBasis: 140, minWidth: 140 },
     stat: {
       flex: 1,
       backgroundColor: colors.surface,

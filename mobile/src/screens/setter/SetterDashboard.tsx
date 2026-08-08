@@ -131,6 +131,7 @@ const makeStyles = (colors: ThemeColors) =>
     },
     statsRow: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginBottom: spacing.md,
     },
