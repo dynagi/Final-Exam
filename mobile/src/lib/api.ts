@@ -13,6 +13,8 @@ async function request(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        // Skip ngrok-free's HTML browser-warning interstitial so we get JSON.
+        'ngrok-skip-browser-warning': 'true',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(body),

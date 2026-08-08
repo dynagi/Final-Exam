@@ -38,14 +38,32 @@ function lanHostFromConstants(): string | null {
   return ip;
 }
 
-const lanHost = Platform.OS === 'web' ? null : lanHostFromConstants();
+/**
+ * Pin your PC's LAN IP here when scanning from a PHYSICAL phone. This wins over
+ * auto-detection (use it when the bundle host is a tunnel/USB/localhost, which
+ * a real phone can't reach). Find it with `ipconfig` → IPv4 of your Wi-Fi.
+ * Set to '' to fall back to auto-detection.
+ */
+const LAN_HOST_OVERRIDE = '192.168.1.102';
+
+/**
+ * Full URL override — use when the phone is NOT on the same Wi-Fi as the PC.
+ * Expose the crypto server with a public tunnel and paste its URL here, e.g.
+ *   cloudflared tunnel --url http://localhost:4000
+ *   -> 'https://something-random.trycloudflare.com'
+ * When set, this wins over everything below. Leave '' for the LAN/emulator path.
+ */
+const CRYPTO_SERVER_URL_OVERRIDE = '';
+
+const lanHost = Platform.OS === 'web' ? null : LAN_HOST_OVERRIDE || lanHostFromConstants();
 // Emulator/simulator fallbacks when no LAN IP is available.
 const fallback = Platform.OS === 'ios' ? '127.0.0.1' : '10.0.2.2';
 
 export const CRYPTO_SERVER_URL =
-  Platform.OS === 'web'
+  CRYPTO_SERVER_URL_OVERRIDE ||
+  (Platform.OS === 'web'
     ? `http://localhost:${CRYPTO_PORT}`
-    : `http://${lanHost ?? fallback}:${CRYPTO_PORT}`;
+    : `http://${lanHost ?? fallback}:${CRYPTO_PORT}`);
 
 export const IS_CONFIGURED = !SUPABASE_URL.includes('YOUR-PROJECT');
 
