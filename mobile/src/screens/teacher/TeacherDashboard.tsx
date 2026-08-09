@@ -5,6 +5,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { Badge, Card, Screen, SectionTitle, Stat } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { fetchAll } from '../../lib/db';
 import { timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import { labelFor, spacing, ThemeColors } from '../../lib/theme';
@@ -21,12 +22,15 @@ export default function TeacherDashboard() {
 
   const load = useCallback(async () => {
     if (!teacherId) return;
-    const { data } = await supabase
-      .from('questions')
-      .select('*')
-      .eq('teacher_id', teacherId)
-      .order('created_at', { ascending: false });
-    setQuestions((data as Question[] | null) ?? []);
+    const { rows } = await fetchAll<Question>(() =>
+      supabase
+        .from('questions')
+        .select('*')
+        .eq('teacher_id', teacherId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+    );
+    setQuestions(rows);
   }, [teacherId]);
 
   useFocusEffect(

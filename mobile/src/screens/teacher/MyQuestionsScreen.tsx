@@ -1,13 +1,16 @@
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { Badge, Card, EmptyState, Screen } from '../../components/UI';
+import { Badge, Button, Card, EmptyState, Pagination, Screen } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
+import { showAlert } from '../../lib/alert';
+import { fetchAll } from '../../lib/db';
 import { timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import { labelFor, spacing, ThemeColors } from '../../lib/theme';
 import { Question } from '../../lib/types';
+import { usePagination } from '../../lib/usePagination';
 
 export default function MyQuestionsScreen() {
   const { profile } = useAuth();
@@ -17,15 +20,21 @@ export default function MyQuestionsScreen() {
 
   const [questions, setQuestions] = useState<Question[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!teacherId) return;
-    const { data } = await supabase
-      .from('questions')
-      .select('*, exam:exams(name)')
-      .eq('teacher_id', teacherId)
-      .order('created_at', { ascending: false });
-    setQuestions((data as Question[] | null) ?? []);
+    // Paged: a prolific teacher's bank can run past PostgREST's max-rows.
+    const { rows, error } = await fetchAll<Question>(() =>
+      supabase
+        .from('questions')
+        .select('*, exam:exams(name)')
+        .eq('teacher_id', teacherId)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+    );
+    setQuestions(rows);
+    setLoadError(error ? error.message : null);
   }, [teacherId]);
 
   useFocusEffect(
@@ -40,11 +49,64 @@ export default function MyQuestionsScreen() {
     setRefreshing(false);
   };
 
+  /**
+   * Withdraw a question that is not yet sealed into a paper. Sections are
+   * capped at exactly what the exam format requires, so a full section can
+   * only be changed by taking a question back out first.
+   */
+  const withdraw = async (question: Question) => {
+    const { error } = await supabase.from('questions').delete().eq('id', question.id);
+    if (error) {
+      showAlert('Could not withdraw', error.message);
+      return;
+    }
+    setQuestions((prev) => prev.filter((q) => q.id !== question.id));
+  };
+
+  const pager = usePagination(questions, 25);
+
   return (
     <Screen>
+      {loadError ? (
+        <Text style={styles.error}>Could not load your questions: {loadError}</Text>
+      ) : questions.length > 0 ? (
+        <Text style={styles.count}>
+          {questions.length} question{questions.length === 1 ? '' : 's'} in the bank
+        </Text>
+      ) : null}
+
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        from={pager.from}
+        to={pager.to}
+        total={pager.total}
+        pageSize={pager.pageSize}
+        onPage={pager.setPage}
+        onPageSize={pager.setPageSize}
+      />
+
       <FlatList
-        data={questions}
+        data={pager.pageItems}
         keyExtractor={(item) => item.id}
+        initialNumToRender={25}
+        maxToRenderPerBatch={25}
+        windowSize={21}
+        removeClippedSubviews={false}
+        contentContainerStyle={styles.listContent}
+        ListFooterComponent={
+          pager.pageCount > 1 ? (
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              from={pager.from}
+              to={pager.to}
+              total={pager.total}
+              pageSize={pager.pageSize}
+              onPage={pager.setPage}
+            />
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -76,25 +138,40 @@ export default function MyQuestionsScreen() {
               <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
             </View>
             <Text style={styles.body}>{item.body}</Text>
-            {item.question_type === 'mcq' ? (
-              item.options.map((option, index) => (
-                <Text
-                  key={index}
-                  style={[styles.option, index === item.correct_index && styles.correctOption]}
-                >
-                  {String.fromCharCode(65 + index)}. {option}
-                  {index === item.correct_index ? '  ✓' : ''}
-                </Text>
-              ))
+            {item.question_type === 'mcq' || item.question_type === 'msq' ? (
+              item.options.map((option, index) => {
+                const isKey =
+                  item.question_type === 'mcq'
+                    ? index === item.correct_index
+                    : (item.correct_indices ?? []).includes(index);
+                return (
+                  <Text key={index} style={[styles.option, isKey && styles.correctOption]}>
+                    {String.fromCharCode(65 + index)}. {option}
+                    {isKey ? '  ✓' : ''}
+                  </Text>
+                );
+              })
+            ) : item.question_type === 'numerical' ? (
+              <Text style={styles.option}>Answer: {item.answer_numeric ?? '—'}</Text>
             ) : (
               <Text style={styles.theoryHint}>Theory question · model answer set offline</Text>
             )}
             <Text style={styles.meta}>
               {item.exam?.name ? `${item.exam.name} · ` : ''}
+              {item.section_name ? `${item.section_name} · ` : ''}
               {item.subject}
               {item.topic ? ` · ${item.topic}` : ''} · {item.difficulty} · {item.marks} mark
               {item.marks === 1 ? '' : 's'}
             </Text>
+            {item.status !== 'used' ? (
+              <Button
+                title="Withdraw from bank"
+                variant="ghost"
+                icon="trash-outline"
+                onPress={() => void withdraw(item)}
+                style={{ marginTop: spacing.md }}
+              />
+            ) : null}
           </Card>
         )}
       />
@@ -104,6 +181,9 @@ export default function MyQuestionsScreen() {
 
 const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    count: { color: colors.textDim, fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
+    error: { color: colors.danger, fontSize: 12, fontWeight: '700', marginBottom: spacing.sm },
+    listContent: { paddingBottom: spacing.xl },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

@@ -21,7 +21,8 @@ SecureAIExam/
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. Open **SQL Editor** → paste the entire contents of [`supabase/schema.sql`](supabase/schema.sql) → **Run**. (Run once on a fresh project.)
-   > **Already ran schema.sql before?** Run, in order, [`supabase/patch-1-digest-and-exams.sql`](supabase/patch-1-digest-and-exams.sql) (fixes the `digest()` sealing error + adds exam categories), [`supabase/patch-2-question-types.sql`](supabase/patch-2-question-types.sql) (MCQ **and** theoretical question types, per-question marks, PDF-sourced questions), [`supabase/patch-3-centers-and-scan.sql`](supabase/patch-3-centers-and-scan.sql) (exam centers, per-copy allocation, invigilator scan-in, pre-exam reconciliation), and [`supabase/patch-4-slots-and-invigilator.sql`](supabase/patch-4-slots-and-invigilator.sql) (dynamic exam slots + the invigilator/center login role). All are idempotent. *(patch-4 adds an enum value — if Supabase complains about "unsafe use of new value of enum type", run that first `ALTER TYPE` line on its own, then the rest.)*
+   > **Already ran schema.sql before?** Run, in order, [`supabase/patch-1-digest-and-exams.sql`](supabase/patch-1-digest-and-exams.sql) (fixes the `digest()` sealing error + adds exam categories), [`supabase/patch-2-question-types.sql`](supabase/patch-2-question-types.sql) (MCQ **and** theoretical question types, per-question marks, PDF-sourced questions), [`supabase/patch-3-centers-and-scan.sql`](supabase/patch-3-centers-and-scan.sql) (exam centers, per-copy allocation, invigilator scan-in, pre-exam reconciliation), [`supabase/patch-4-slots-and-invigilator.sql`](supabase/patch-4-slots-and-invigilator.sql) (dynamic exam slots + the invigilator/center login role), [`supabase/patch-5-exam-formats.sql`](supabase/patch-5-exam-formats.sql) (exam formats per year, blueprint sections on questions, numerical/MSQ question types, teacher subject assignment, and the preview-before-encryption gate), [`supabase/patch-6-paper-sets.sql`](supabase/patch-6-paper-sets.sql) (Admin-controlled paper sets, an unlimited question bank, and cross-set question uniqueness), [`supabase/patch-7-qr-watermark.sql`](supabase/patch-7-qr-watermark.sql) (per-copy trace code), and [`supabase/patch-8-qr-detections.sql`](supabase/patch-8-qr-detections.sql) (frame-level QR watermark security events). All are idempotent.
+   > The crypto service checks all of these at boot and prints exactly which are missing, so start it once and read the log if anything looks wrong. *(patch-4 adds an enum value — if Supabase complains about "unsafe use of new value of enum type", run that first `ALTER TYPE` line on its own, then the rest.)*
 3. From **Project Settings → API**, note three values:
    - Project URL
    - `anon` public key
@@ -35,6 +36,17 @@ copy .env.example .env     # then edit .env with your URL, service_role key, and
 npm install
 npm start                  # -> listening on http://0.0.0.0:4000
 ```
+
+> Optional: set `DETECTOR_KEY` in `server/.env` to let an unattended monitoring
+> client post watermark sightings with an `x-detector-key` header instead of a
+> user session. `DETECTION_DEDUP_SEC` (default 120) is how long repeat sightings
+> of the same frame by the same scanner fold into one event.
+>
+> This service owns the examination format catalogue
+> ([`server/src/examFormats.js`](server/src/examFormats.js)) and enforces it. Scheduling an
+> exam, adding questions, composing a draft, previewing it and sealing it all go through it,
+> so it must be running for those steps — a client cannot write a paper that breaks its
+> exam format even by calling Supabase directly.
 
 ## 3. Python AI service (now required for PDF question import)
 
@@ -100,11 +112,12 @@ Create three accounts from the app's **Create account** screen (use the role tab
 
 Then run the lifecycle — ideally with two devices/emulators side by side to see the realtime updates:
 
-1. **Admin** → *Exams* → **Schedule Exam** (e.g. "NEET UG 2026") with its **date and 2–3 daily slots** (each slot has a start/end time; duration is computed). Questions and papers can only exist under a scheduled exam, so this comes first. *(Teacher/Setter screens unlock live.)*
-2. **Teacher** → *Upload* tab. Two modes, both feeding the same secure bank:
-   - **Type one** — pick MCQ *or* Theory, set marks, and submit. *(Setter's pool updates live.)*
-   - **Import PDF** — choose a PDF of mixed MCQ/theory questions → the AI service runs NLP and returns structured questions → review, deselect any, and bulk-import.
-3. **Paper Setter** → *Compose* → pick the exam → title + select questions from that exam's bank → **Create & Seal** → enter a setter passphrase (≥8 chars — remember it!). Paper status: `SEALED (1/2)`.
+1. **Admin** → *Exams* → **Create Exam** → pick an **exam format and year** from the dropdown (e.g. *JEE Main — Paper 1 2026*, or its 2027 carry-forward). The predefined structure loads immediately — sections, subjects, questions per section, question types, marks per correct answer, negative marking, unattempted marks, total marks and duration. Set the **number of paper sets** (`4` → Set A, B, C, D) and whether questions may be reused across them (off by default). Confirm the name, date and 2–3 daily slots (slot lengths are pre-filled from the format's duration). **Manage paper sets** on the exam card raises or lowers the count later — sealed sets can never be dropped. Optionally use **Assign subjects to teachers** to restrict who may write for which subject. *(Teacher/Setter screens unlock live.)*
+2. **Teacher** → *Upload* tab. The **Subject dropdown comes from the selected exam format** (narrowed to your assigned subjects, if any). Picking a section quota fixes the question type and marks — you cannot change the format's marking scheme — but **the bank itself is unlimited**: write 25, 250 or 2 500 Physics questions. The meters show bank depth against what all the sets together need (`Physics · MCQ · 4 marks 63/80`). Two modes feed the same secure bank:
+   - **Type one** — write the question (MCQ, MSQ, numerical or subjective, per the format) and submit. *(Setter's bank updates live.)*
+   - **Import PDF** — choose a PDF → the AI service runs NLP and returns structured questions → review, deselect any, and bulk-import into the chosen quota.
+   *Withdraw* a question from *My Questions* to take one back out of the bank.
+3. **Paper Setter** → *Compose* → pick the exam → **pick a paper set** (Set A…) → title + select questions (or **Auto-fill**). Each set is an independent paper: bank items already committed to another set show **"Already used in Set A"** and cannot be picked, and a section that has reached its quota stops accepting more (`Maximum questions reached`). The per-section meters must all read `✓` before **Preview Paper** enables. The preview shows the **exact final paper** in the standard exam skeleton — header, duration/marks/paper-set strip, candidate block, instructions, subject sections split into `Section A — MCQ` / `Section B — Numerical Value`, continuous numbering, per-question marks and negatives. Press **← Back to Edit**, or **Confirm & Encrypt Paper** → enter a setter passphrase (≥8 chars — remember it!). That set goes to `SEALED (1/2)`; switch to Set B and repeat. The *Dashboard* tab shows every set's completion at a glance.
 4. **Admin** → *Papers* → **Co-sign** → enter an admin passphrase. *(Watch the setter's My Papers flip to `DUAL-SEALED` in real time.)* From this moment, nobody can decrypt the paper alone.
 5. **Admin** → *Papers* → **Print Ceremony** → enter **both** passphrases + copy count. Each copy is minted with a signed QR + invisible fingerprint, and its chain of custody opens. The decrypted paper then opens in the **Print Preview** tab: a fully rendered, per-copy question paper with its signed **QR code** printed in the header — hit **Print this copy** (browser print on web, native print/share-as-PDF on mobile).
 6. **Admin** → *Centers* → pick the exam → **Add Center** (name, **login code**, **password**, and which **slot** it runs — for the demo pick a slot starting ~25 min ahead). This **provisions a center login account**. Then **Allocate copies** to that center: those copies' QRs become center-wise in the database. *(Save the code+password shown — they're the invigilator's login.)*
@@ -125,6 +138,11 @@ Then run the lifecycle — ideally with two devices/emulators side by side to se
 | "Cannot reach crypto service" | Server running? Correct `CRYPTO_SERVER_URL` for your device type? Windows Firewall may need to allow Node on port 4000 |
 | Sealing fails: "function digest(text, unknown) does not exist" | Run [`supabase/patch-1-digest-and-exams.sql`](supabase/patch-1-digest-and-exams.sql) in the SQL Editor (pgcrypto lives in the `extensions` schema; the hash-chain triggers needed it on their search_path) |
 | Teacher's Upload tab says "No exams scheduled yet" | By design — the Admin must schedule an exam first (*Exams* tab); questions belong to an exam |
+| Exam format dropdown is empty | The catalogue is served by the Node crypto service — start it (step 2) and reopen the dialog |
+| "Preview the paper and confirm it before sealing" | Open **Preview Paper**, review it, then **Confirm & Encrypt Paper**. Adding or removing a question clears a previous confirmation on purpose |
+| "Maximum questions reached" while selecting | That section of *this set* already holds exactly what the format requires. Deselect one, or switch to another set |
+| A bank question shows "Already used in Set A" | Sets must contain different questions. Pick another, or have the Admin enable **Allow question reuse across sets** |
+| "Cannot reduce to N sets — Set D has already been sealed" | Sealed sets are immutable. Reduce only to a count that keeps every sealed set |
 | Realtime not updating | Ensure the `alter publication supabase_realtime …` lines at the end of `schema.sql` ran without error |
 | "This account is registered as X" on login | You picked the wrong role tab — roles are enforced, not cosmetic |
 

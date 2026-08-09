@@ -46,11 +46,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!userId) return;
     let cancelled = false;
     void (async () => {
-      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single();
-      if (!cancelled) {
-        setProfile((data as Profile | null) ?? null);
-        setLoading(false);
+      // maybeSingle rather than single: a signed-in account with no profile
+      // row is a state worth reporting, not a 406 the caller has to decode.
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error) {
+        console.warn(`Could not load the profile for ${userId}: ${error.message}`);
+      } else if (!data) {
+        console.warn(
+          `Signed in as ${userId} but no profiles row exists. If the database was rebuilt, ` +
+            'run the profile backfill at the bottom of supabase/reset-database.sql.'
+        );
       }
+      setProfile((data as Profile | null) ?? null);
+      setLoading(false);
     })();
     return () => {
       cancelled = true;
@@ -68,8 +81,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: prof } = await supabase
       .from('profiles')
       .select('*')
+      // maybeSingle: an account whose profile row is missing is a real state
+      // to handle, not an HTTP 406 to throw.
       .eq('id', data.user.id)
-      .single();
+      .maybeSingle();
     if (!prof) {
       await supabase.auth.signOut();
       throw new Error('No profile found for this account.');
@@ -91,8 +106,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: prof } = await supabase
       .from('profiles')
       .select('*')
+      // maybeSingle: an account whose profile row is missing is a real state
+      // to handle, not an HTTP 406 to throw.
       .eq('id', data.user.id)
-      .single();
+      .maybeSingle();
     if (!prof || (prof as Profile).role !== 'invigilator') {
       await supabase.auth.signOut();
       throw new Error('This is not a center login.');

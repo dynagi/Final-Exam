@@ -24,6 +24,7 @@ import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { gradients, labelFor, radius, serif, spacing, ThemeColors, toneFor } from '../lib/theme';
 import { Exam, Role, ROLE_LABEL } from '../lib/types';
+import { PAGE_SIZES, pageWindow } from '../lib/usePagination';
 import { PressableIcon, Reveal, Tappable, useCountUp, useFloat, usePressableScale, usePulse } from './anim';
 import { Aurora } from './Aurora';
 import GradientText from './GradientText';
@@ -461,6 +462,343 @@ export function Stepper({
   );
 }
 
+export interface SelectOption {
+  value: string;
+  label: string;
+  /** Second line under the label — body, mode, marks summary… */
+  hint?: string;
+  /** Groups options under a sticky-ish heading in the picker sheet. */
+  group?: string;
+  /** Small pill on the right, e.g. "PROVISIONAL". */
+  tag?: string;
+  disabled?: boolean;
+}
+
+/**
+ * Dropdown backed by a searchable sheet. Used wherever the list is too long
+ * for chips — the exam-format catalogue is ~140 entries, and the subject list
+ * comes straight from the selected format.
+ */
+export function Select({
+  label,
+  placeholder = 'Select…',
+  value,
+  options,
+  onChange,
+  disabled,
+  searchable,
+  emptyText = 'Nothing to choose from yet.',
+}: {
+  label?: string;
+  placeholder?: string;
+  value: string | null;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  /** Defaults on once the list gets long. */
+  searchable?: boolean;
+  emptyText?: string;
+}) {
+  const { colors, styles } = useStyles();
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const selected = options.find((o) => o.value === value) ?? null;
+  const withSearch = searchable ?? options.length > 8;
+
+  const filtered = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) =>
+      `${o.label} ${o.hint ?? ''} ${o.group ?? ''}`.toLowerCase().includes(q)
+    );
+  }, [options, query]);
+
+  return (
+    <View style={{ marginBottom: spacing.md }}>
+      {label ? <Text style={styles.inputLabel}>{label}</Text> : null}
+      <Tappable
+        onPress={() => {
+          if (disabled) return;
+          setQuery('');
+          setOpen(true);
+        }}
+        disabled={disabled}
+        style={[styles.selectField, disabled && styles.selectFieldOff]}
+      >
+        <View style={styles.flex}>
+          <Text style={selected ? styles.selectValue : styles.selectPlaceholder} numberOfLines={1}>
+            {selected?.label ?? placeholder}
+          </Text>
+          {selected?.hint ? (
+            <Text style={styles.selectHint} numberOfLines={1}>
+              {selected.hint}
+            </Text>
+          ) : null}
+        </View>
+        <Ionicons name="chevron-down" size={18} color={colors.textDim} />
+      </Tappable>
+
+      <Modal transparent visible={open} animationType="fade" onRequestClose={() => setOpen(false)}>
+        <BlurView intensity={28} tint={colors.blurTint} style={StyleSheet.absoluteFill} />
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.modalCard, styles.selectSheet]}>
+            <LinearGradient
+              colors={gradients.brand}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.modalTopBar}
+            />
+            <View style={styles.selectSheetHead}>
+              <Text style={styles.modalTitle}>{label ?? 'Select'}</Text>
+              <PressableIcon name="close" size={22} color={colors.textDim} onPress={() => setOpen(false)} />
+            </View>
+            {withSearch ? (
+              <TextInput
+                value={query}
+                onChangeText={setQuery}
+                placeholder="Search…"
+                placeholderTextColor={colors.textFaint}
+                autoCapitalize="none"
+                style={[styles.input, { marginBottom: spacing.md }]}
+              />
+            ) : null}
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {filtered.length === 0 ? (
+                <Text style={styles.selectEmpty}>{query ? 'No match.' : emptyText}</Text>
+              ) : (
+                filtered.map((option, index) => {
+                  const active = option.value === value;
+                  const newGroup = option.group && option.group !== filtered[index - 1]?.group;
+                  return (
+                    <View key={option.value}>
+                      {newGroup ? <Text style={styles.selectGroup}>{option.group}</Text> : null}
+                      <Tappable
+                        onPress={() => {
+                          if (option.disabled) return;
+                          onChange(option.value);
+                          setOpen(false);
+                        }}
+                        disabled={option.disabled}
+                        style={[
+                          styles.selectRow,
+                          active && styles.selectRowActive,
+                          option.disabled && styles.selectRowOff,
+                        ]}
+                      >
+                        <View style={styles.flex}>
+                          <Text style={[styles.selectRowLabel, active && { color: colors.primary }]}>
+                            {option.label}
+                          </Text>
+                          {option.hint ? <Text style={styles.selectRowHint}>{option.hint}</Text> : null}
+                        </View>
+                        {option.tag ? (
+                          <View style={styles.selectTag}>
+                            <Text style={styles.selectTagText}>{option.tag}</Text>
+                          </View>
+                        ) : null}
+                        {active ? (
+                          <Ionicons name="checkmark-circle" size={20} color={colors.primary} />
+                        ) : null}
+                      </Tappable>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+/**
+ * `Physics 20/20 ✓` / `Chemistry 18/20 ⚠` — the per-section completion meter
+ * the paper setter works against, with the per-type quota underneath.
+ */
+export function SectionProgress({
+  name,
+  current,
+  target,
+  complete,
+  over,
+  detail,
+  warning,
+}: {
+  name: string;
+  current: number;
+  /** "20" or "22–26" for the formats published as a range. */
+  target: string;
+  complete: boolean;
+  over?: boolean;
+  detail?: { label: string; current: number; target: string; ok: boolean }[];
+  warning?: string | null;
+}) {
+  const { colors, styles } = useStyles();
+  const tone = complete ? colors.success : over ? colors.danger : colors.warning;
+  const max = Math.max(1, Number(target.split('–').pop()) || current || 1);
+  const ratio = Math.max(0, Math.min(1, current / max));
+
+  return (
+    <View style={styles.progressRow}>
+      <View style={styles.progressHead}>
+        <Text style={styles.progressName} numberOfLines={1}>
+          {name}
+        </Text>
+        <Text style={[styles.progressCount, { color: tone }]}>
+          {current}/{target} {complete ? '✓' : '⚠'}
+        </Text>
+      </View>
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${ratio * 100}%`, backgroundColor: tone }]} />
+      </View>
+      {detail?.length ? (
+        <View style={styles.progressDetail}>
+          {detail.map((d) => (
+            <View key={d.label} style={styles.progressChip}>
+              <Text style={[styles.progressChipText, { color: d.ok ? colors.textDim : tone }]}>
+                {d.label} {d.current}/{d.target}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+      {warning ? <Text style={[styles.progressWarning, { color: tone }]}>⚠ {warning}</Text> : null}
+    </View>
+  );
+}
+
+/**
+ * Page control for the question lists: a range readout, page-size chips and
+ * a compact page strip. Renders nothing when a single page holds everything,
+ * so short banks stay uncluttered.
+ */
+export function Pagination({
+  page,
+  pageCount,
+  from,
+  to,
+  total,
+  pageSize,
+  onPage,
+  onPageSize,
+  noun = 'question',
+}: {
+  page: number;
+  pageCount: number;
+  from: number;
+  to: number;
+  total: number;
+  pageSize: number;
+  onPage: (p: number) => void;
+  onPageSize?: (n: number) => void;
+  noun?: string;
+}) {
+  const { colors, styles } = useStyles();
+  const showSizes = !!onPageSize && total > PAGE_SIZES[0];
+  if (pageCount <= 1 && !showSizes) return null;
+
+  return (
+    <View style={styles.pagination}>
+      <View style={styles.paginationTop}>
+        <Text style={styles.paginationRange}>
+          {total === 0
+            ? `No ${noun}s`
+            : `Showing ${from}–${to} of ${total} ${noun}${total === 1 ? '' : 's'}`}
+        </Text>
+        {showSizes ? (
+          <View style={styles.paginationSizes}>
+            {PAGE_SIZES.map((size) => {
+              const active = size === pageSize;
+              return (
+                <Tappable
+                  key={size}
+                  onPress={() => onPageSize?.(size)}
+                  style={[styles.paginationSize, active && styles.paginationSizeActive]}
+                >
+                  <Text style={[styles.paginationSizeText, active && { color: colors.primary }]}>
+                    {size === 0 ? 'All' : size}
+                  </Text>
+                </Tappable>
+              );
+            })}
+          </View>
+        ) : null}
+      </View>
+
+      {pageCount > 1 ? (
+        <View style={styles.paginationPages}>
+          <Tappable
+            onPress={() => onPage(page - 1)}
+            disabled={page <= 1}
+            style={[styles.pageBtn, page <= 1 && styles.pageBtnOff]}
+          >
+            <Ionicons name="chevron-back" size={16} color={colors.text} />
+          </Tappable>
+
+          {pageWindow(page, pageCount).map((p, i) =>
+            p === null ? (
+              <Text key={`gap-${i}`} style={styles.pageGap}>
+                …
+              </Text>
+            ) : (
+              <Tappable
+                key={p}
+                onPress={() => onPage(p)}
+                style={[styles.pageBtn, p === page && styles.pageBtnActive]}
+              >
+                <Text style={[styles.pageBtnText, p === page && { color: colors.onAccent }]}>
+                  {p}
+                </Text>
+              </Tappable>
+            )
+          )}
+
+          <Tappable
+            onPress={() => onPage(page + 1)}
+            disabled={page >= pageCount}
+            style={[styles.pageBtn, page >= pageCount && styles.pageBtnOff]}
+          >
+            <Ionicons name="chevron-forward" size={16} color={colors.text} />
+          </Tappable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/** On/off switch with an explanatory line — used for policy flags. */
+export function Toggle({
+  label,
+  value,
+  onChange,
+  hint,
+  disabled,
+}: {
+  label: string;
+  value: boolean;
+  onChange: (v: boolean) => void;
+  hint?: string;
+  disabled?: boolean;
+}) {
+  const { colors, styles } = useStyles();
+  return (
+    <Tappable
+      onPress={() => !disabled && onChange(!value)}
+      disabled={disabled}
+      style={[styles.toggleRow, disabled && styles.selectFieldOff]}
+    >
+      <View style={styles.flex}>
+        <Text style={styles.toggleLabel}>{label}</Text>
+        {hint ? <Text style={styles.toggleHint}>{hint}</Text> : null}
+      </View>
+      <View style={[styles.toggleTrack, value && { backgroundColor: colors.primary }]}>
+        <View style={[styles.toggleKnob, value && styles.toggleKnobOn]} />
+      </View>
+    </Tappable>
+  );
+}
+
 const ALARMING = ['missing', 'leaked', 'critical'];
 
 /** Stamp-in mount animation: badges land like a rubber stamp being pressed onto paper. */
@@ -816,6 +1154,147 @@ const makeStyles = (colors: ThemeColors) =>
       paddingVertical: 0,
     },
     stepperSuffix: { color: colors.textDim, fontSize: 13, fontWeight: '600' },
+    selectField: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      backgroundColor: colors.surfaceAlt,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: 12,
+    },
+    selectFieldOff: { opacity: 0.5 },
+    selectValue: { color: colors.text, fontSize: 15, fontWeight: '600' },
+    selectPlaceholder: { color: colors.textFaint, fontSize: 15 },
+    selectHint: { color: colors.textDim, fontSize: 11, marginTop: 2 },
+    selectSheet: { maxHeight: '82%' },
+    selectSheetHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: spacing.md,
+    },
+    selectGroup: {
+      color: colors.accent,
+      fontSize: 11,
+      fontWeight: '800',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
+      marginTop: spacing.md,
+      marginBottom: spacing.xs,
+    },
+    selectRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.sm,
+      paddingVertical: spacing.md,
+      paddingHorizontal: spacing.md,
+      borderRadius: radius.sm,
+      borderWidth: 1,
+      borderColor: 'transparent',
+    },
+    selectRowActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+    selectRowOff: { opacity: 0.4 },
+    selectRowLabel: { color: colors.text, fontSize: 14, fontWeight: '600' },
+    selectRowHint: { color: colors.textDim, fontSize: 11, marginTop: 2, lineHeight: 15 },
+    selectTag: {
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    },
+    selectTagText: { color: colors.warning, fontSize: 9, fontWeight: '800', letterSpacing: 0.4 },
+    selectEmpty: { color: colors.textDim, fontSize: 13, fontStyle: 'italic', padding: spacing.md },
+    pagination: { marginVertical: spacing.sm, gap: spacing.sm },
+    paginationTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    paginationRange: { color: colors.textDim, fontSize: 12, fontWeight: '700' },
+    paginationSizes: { flexDirection: 'row', gap: 4 },
+    paginationSize: {
+      minWidth: 34,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      backgroundColor: colors.surfaceAlt,
+    },
+    paginationSizeActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
+    paginationSizeText: { color: colors.textDim, fontSize: 11, fontWeight: '800' },
+    paginationPages: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 4 },
+    pageBtn: {
+      minWidth: 32,
+      height: 32,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.sm,
+      paddingHorizontal: 6,
+      backgroundColor: colors.surfaceAlt,
+    },
+    pageBtnActive: { borderColor: 'transparent', backgroundColor: colors.primary },
+    pageBtnOff: { opacity: 0.4 },
+    pageBtnText: { color: colors.text, fontSize: 12, fontWeight: '800' },
+    pageGap: { color: colors.textFaint, fontSize: 12, paddingHorizontal: 2 },
+    toggleRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      backgroundColor: colors.surfaceAlt,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+      marginBottom: spacing.md,
+    },
+    toggleLabel: { color: colors.text, fontSize: 14, fontWeight: '700' },
+    toggleHint: { color: colors.textDim, fontSize: 11, marginTop: 2, lineHeight: 16 },
+    toggleTrack: {
+      width: 46,
+      height: 26,
+      borderRadius: 13,
+      backgroundColor: colors.borderLight,
+      padding: 3,
+      justifyContent: 'center',
+    },
+    toggleKnob: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      backgroundColor: colors.surface,
+    },
+    toggleKnobOn: { alignSelf: 'flex-end' },
+    progressRow: { marginBottom: spacing.md },
+    progressHead: { flexDirection: 'row', justifyContent: 'space-between', gap: spacing.sm },
+    progressName: { color: colors.text, fontSize: 14, fontWeight: '700', flex: 1 },
+    progressCount: { fontSize: 14, fontWeight: '800', fontVariant: ['tabular-nums'] },
+    progressTrack: {
+      height: 6,
+      borderRadius: 3,
+      backgroundColor: colors.surfaceAlt,
+      overflow: 'hidden',
+      marginTop: 6,
+    },
+    progressFill: { height: '100%', borderRadius: 3 },
+    progressDetail: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: 6 },
+    progressChip: {
+      backgroundColor: colors.surfaceAlt,
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    },
+    progressChipText: { fontSize: 10, fontWeight: '700' },
+    progressWarning: { fontSize: 12, marginTop: 6, lineHeight: 17 },
     chipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     chip: {
       borderWidth: 1,

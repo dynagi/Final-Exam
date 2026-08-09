@@ -1,5 +1,12 @@
 node_modules/
 .env
+.env.*
+!.env.example
+
+# AI assistant / agent tooling — local developer aids, not part of the project
+CLAUDE.md
+AGENTS.md
+.claude/
 .expo/
 dist/
 build/

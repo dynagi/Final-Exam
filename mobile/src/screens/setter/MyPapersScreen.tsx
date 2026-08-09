@@ -2,17 +2,20 @@ import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import PaperPreview from '../../components/PaperPreview';
 import { Badge, Button, Card, CeremonyModal, EmptyState, Screen } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
-import { sealPaper } from '../../lib/api';
+import { confirmPaperPreview, previewPaper, sealPaper, validatePaper } from '../../lib/api';
+import { CompositionReport, sectionProgressLabel } from '../../lib/examFormats';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import { spacing, ThemeColors } from '../../lib/theme';
-import { Paper } from '../../lib/types';
+import { Paper, PaperView } from '../../lib/types';
 
 const STATUS_HINT: Partial<Record<Paper['status'], string>> = {
+  draft: 'Draft. Preview and confirm it to unlock sealing.',
   sealed: 'Waiting for Admin co-signature (key share 2/2)…',
   sealed_dual: 'Dual-sealed. Ready for the two-person print ceremony.',
   printed: 'Printed. Copies are under live chain-of-custody tracking.',
@@ -29,6 +32,15 @@ export default function MyPapersScreen() {
   const [sealTarget, setSealTarget] = useState<Paper | null>(null);
   const [sealing, setSealing] = useState(false);
 
+  // Preview → confirm → seal, the same gate the Compose screen uses.
+  const [previewTarget, setPreviewTarget] = useState<Paper | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [view, setView] = useState<PaperView | null>(null);
+  const [report, setReport] = useState<CompositionReport | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  /** paper id -> its live composition report, for the draft progress lines. */
+  const [drafts, setDrafts] = useState<Record<string, CompositionReport>>({});
+
   const load = useCallback(async () => {
     if (!setterId) return;
     const { data } = await supabase
@@ -36,7 +48,20 @@ export default function MyPapersScreen() {
       .select('*, exam:exams!papers_exam_id_fkey(name)')
       .eq('setter_id', setterId)
       .order('created_at', { ascending: false });
-    setPapers((data as Paper[] | null) ?? []);
+    const rows = (data as Paper[] | null) ?? [];
+    setPapers(rows);
+
+    // Show each draft's per-section progress against its exam format.
+    const reports = await Promise.all(
+      rows
+        .filter((p) => p.status === 'draft')
+        .map((p) =>
+          validatePaper(p.id)
+            .then((res) => [p.id, res.report] as const)
+            .catch(() => null)
+        )
+    );
+    setDrafts(Object.fromEntries(reports.filter((r): r is [string, CompositionReport] => !!r)));
   }, [setterId]);
 
   useFocusEffect(
@@ -65,6 +90,40 @@ export default function MyPapersScreen() {
     setRefreshing(true);
     await load();
     setRefreshing(false);
+  };
+
+  const openPreview = async (paper: Paper) => {
+    setPreviewTarget(paper);
+    setPreviewLoading(true);
+    setView(null);
+    setReport(null);
+    try {
+      const res = await previewPaper(paper.id);
+      setView(res.view);
+      setReport(res.report);
+    } catch (e) {
+      setPreviewTarget(null);
+      showAlert('Preview failed', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  /** Confirming the preview is what unlocks the sealing ceremony. */
+  const confirmAndSeal = async () => {
+    if (!previewTarget) return;
+    setConfirming(true);
+    try {
+      await confirmPaperPreview(previewTarget.id);
+      const target = previewTarget;
+      setPreviewTarget(null);
+      setSealTarget(target);
+      void load();
+    } catch (e) {
+      showAlert('Cannot confirm', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setConfirming(false);
+    }
   };
 
   const handleSeal = async (values: Record<string, string>) => {
@@ -116,6 +175,7 @@ export default function MyPapersScreen() {
             </View>
             <Text style={styles.meta}>
               {item.exam?.name ? `${item.exam.name} · ` : ''}
+              {item.set_label ? `${item.set_label} · ` : ''}
               {item.subject} · {item.question_count} questions · created {timeAgo(item.created_at)}
             </Text>
 
@@ -136,16 +196,57 @@ export default function MyPapersScreen() {
               <Text style={styles.hint}>{STATUS_HINT[item.status]}</Text>
             ) : null}
 
+            {item.status === 'draft' && drafts[item.id]?.enforced ? (
+              <View style={styles.progress}>
+                {drafts[item.id].sections.map((section) => (
+                  <Text
+                    key={section.name}
+                    style={[
+                      styles.progressLine,
+                      { color: section.complete ? colors.success : colors.warning },
+                    ]}
+                  >
+                    {sectionProgressLabel(section)}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+
             {item.status === 'draft' && (
-              <Button
-                title="Seal this paper (Share 1/2)"
-                icon="lock-closed-outline"
-                onPress={() => setSealTarget(item)}
-                style={{ marginTop: spacing.md }}
-              />
+              <>
+                <Button
+                  title="Preview Paper"
+                  icon="eye-outline"
+                  onPress={() => void openPreview(item)}
+                  style={{ marginTop: spacing.md }}
+                />
+                {item.previewed_at ? (
+                  <Button
+                    title="Seal this paper (Share 1/2)"
+                    variant="ghost"
+                    icon="lock-closed-outline"
+                    onPress={() => setSealTarget(item)}
+                    style={{ marginTop: spacing.sm }}
+                  />
+                ) : (
+                  <Text style={styles.hint}>
+                    Sealing unlocks once you preview and confirm the paper.
+                  </Text>
+                )}
+              </>
             )}
           </Card>
         )}
+      />
+
+      <PaperPreview
+        visible={!!previewTarget}
+        view={view}
+        report={report}
+        loading={previewLoading}
+        busy={confirming}
+        onBack={() => setPreviewTarget(null)}
+        onConfirm={() => void confirmAndSeal()}
       />
 
       <CeremonyModal
@@ -160,7 +261,7 @@ export default function MyPapersScreen() {
             secure: true,
           },
         ]}
-        submitLabel="Seal Paper"
+        submitLabel="Encrypt & Seal Paper"
         busy={sealing}
         onSubmit={(values) => void handleSeal(values)}
         onClose={() => setSealTarget(null)}
@@ -199,4 +300,6 @@ const makeStyles = (colors: ThemeColors) =>
       marginTop: spacing.sm,
       fontStyle: 'italic',
     },
+    progress: { marginTop: spacing.sm, gap: 2 },
+    progressLine: { fontSize: 12, fontWeight: '700' },
   });

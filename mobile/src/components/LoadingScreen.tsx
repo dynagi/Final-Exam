@@ -109,8 +109,10 @@ function RotatingPen() {
 
   const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   const ringRotate = ring.interpolate({ inputRange: [0, 1], outputRange: ['360deg', '0deg'] });
-  const translateY = bob.interpolate({ inputRange: [0, 1], outputRange: [0, -6] });
-  const size = 128;
+  const translateY = bob.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
+  // Ring and nib scaled together so the pen keeps its clearance inside the orbit.
+  const size = 168;
+  const penSize = 70;
 
   return (
     <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center', marginBottom: spacing.lg }}>
@@ -134,10 +136,10 @@ function RotatingPen() {
           shadowColor: colors.accent,
           shadowOffset: { width: 0, height: 0 },
           shadowOpacity: 0.6,
-          shadowRadius: 14,
+          shadowRadius: 18,
         }}
       >
-        <Ionicons name="pencil" size={52} color={colors.accent} />
+        <Ionicons name="pencil" size={penSize} color={colors.accent} />
       </Animated.View>
     </View>
   );

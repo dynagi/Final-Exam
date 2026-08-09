@@ -9,7 +9,7 @@ import {
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
 import LoadingScreen from '../components/LoadingScreen';
 import { HeaderActions } from '../components/UI';
@@ -39,6 +39,7 @@ import AdminPapersScreen from '../screens/admin/AdminPapersScreen';
 import AuditLogScreen from '../screens/admin/AuditLogScreen';
 import CentersScreen from '../screens/admin/CentersScreen';
 import CustodyScreen from '../screens/admin/CustodyScreen';
+import DetectionsScreen from '../screens/admin/DetectionsScreen';
 import ExamsScreen from '../screens/admin/ExamsScreen';
 import PrintPreviewScreen from '../screens/admin/PrintPreviewScreen';
 
@@ -225,6 +226,15 @@ function AdminTabs() {
         options={{ title: 'Chain of Custody', tabBarLabel: 'Custody', tabBarIcon: icon('location-outline') }}
       />
       <Tabs.Screen
+        name="Detections"
+        component={DetectionsScreen}
+        options={{
+          title: 'QR Detections',
+          tabBarLabel: 'Detections',
+          tabBarIcon: icon('scan-outline'),
+        }}
+      />
+      <Tabs.Screen
         name="Audit"
         component={AuditLogScreen}
         options={{ title: 'Audit Log', tabBarLabel: 'Audit', tabBarIcon: icon('reader-outline') }}
@@ -262,12 +272,33 @@ function navThemeFor(colors: ThemeColors, isDark: boolean): Theme {
   };
 }
 
+/**
+ * Keep the splash on screen for at least `minMs` from app start.
+ *
+ * Restoring a session is a fast AsyncStorage read, so the boot animation used
+ * to flash past before anyone could see it. The floor starts at mount, so it
+ * costs nothing later: a sign-out that briefly flips `loading` after the
+ * timer has elapsed shows no artificial delay.
+ */
+function useMinimumSplash(active: boolean, minMs: number): boolean {
+  const [elapsed, setElapsed] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setElapsed(true), minMs);
+    return () => clearTimeout(id);
+  }, [minMs]);
+  return active || !elapsed;
+}
+
+/** How long the boot animation is guaranteed to stay up. */
+const SPLASH_MIN_MS = 2600;
+
 export default function RootNavigator() {
   const { session, profile, loading } = useAuth();
   const { colors, isDark } = useTheme();
   const navTheme = useMemo(() => navThemeFor(colors, isDark), [colors, isDark]);
+  const showSplash = useMinimumSplash(loading, SPLASH_MIN_MS);
 
-  if (loading) {
+  if (showSplash) {
     return <LoadingScreen />;
   }
 

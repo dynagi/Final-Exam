@@ -188,6 +188,8 @@ export const statusLabel: Record<string, string> = {
   critical: 'Critical',
   // question types
   mcq: 'MCQ',
+  msq: 'MSQ',
+  numerical: 'Numerical',
   theoretical: 'Theory',
 };
 

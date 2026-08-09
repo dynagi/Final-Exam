@@ -1,18 +1,42 @@
 import { useFocusEffect } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { Badge, Button, Card, Chips, EmptyState, ExamPicker, Screen } from '../../components/UI';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import {
+  Badge,
+  Button,
+  Card,
+  Chips,
+  EmptyState,
+  ExamPicker,
+  Pagination,
+  Screen,
+} from '../../components/UI';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
+import { fetchAll } from '../../lib/db';
 import { timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import { labelFor, spacing, ThemeColors } from '../../lib/theme';
-import { Question } from '../../lib/types';
+import { Question, QuestionStatus } from '../../lib/types';
 import { useScheduledExams } from '../../lib/useExams';
+import { usePagination } from '../../lib/usePagination';
 
 type PoolQuestion = Question & { teacher?: { full_name: string } | null };
 
-const TYPE_FILTERS = ['All types', 'MCQ', 'Theory'] as const;
+const TYPE_FILTERS = ['All types', 'MCQ', 'MSQ', 'Numerical', 'Theory'] as const;
+const FILTER_TYPE: Record<string, Question['question_type']> = {
+  MCQ: 'mcq',
+  MSQ: 'msq',
+  Numerical: 'numerical',
+  Theory: 'theoretical',
+};
+
+const STATUS_FILTERS = ['All', 'Pending approval', 'Approved', 'Used in a paper'] as const;
+const FILTER_STATUS: Record<string, QuestionStatus> = {
+  'Pending approval': 'submitted',
+  Approved: 'approved',
+  'Used in a paper': 'used',
+};
 
 export default function QuestionPoolScreen() {
   const { exams } = useScheduledExams();
@@ -22,15 +46,27 @@ export default function QuestionPoolScreen() {
   const [questions, setQuestions] = useState<PoolQuestion[]>([]);
   const [examId, setExamId] = useState<string | null>(null);
   const [subjectFilter, setSubjectFilter] = useState('All');
+  const [teacherFilter, setTeacherFilter] = useState('All teachers');
   const [typeFilter, setTypeFilter] = useState<string>('All types');
+  const [statusFilter, setStatusFilter] = useState<string>('All');
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
+  /**
+   * The whole bank, paged. A single request would silently stop at
+   * PostgREST's max-rows and the setter would approve from a truncated list
+   * without ever being told.
+   */
   const load = useCallback(async () => {
-    const { data } = await supabase
-      .from('questions')
-      .select('*, teacher:profiles(full_name), exam:exams(name)')
-      .order('created_at', { ascending: false });
-    setQuestions((data as PoolQuestion[] | null) ?? []);
+    const { rows, error } = await fetchAll<PoolQuestion>(() =>
+      supabase
+        .from('questions')
+        .select('*, teacher:profiles(full_name), exam:exams(name)')
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+    );
+    setQuestions(rows);
+    setLoadError(error ? error.message : null);
   }, []);
 
   useFocusEffect(
@@ -74,24 +110,65 @@ export default function QuestionPoolScreen() {
     );
   };
 
-  // Subjects are derived dynamically from whatever questions exist —
-  // no hardcoded subject list.
-  const subjectFilters = useMemo(() => {
-    const scoped = examId ? questions.filter((q) => q.exam_id === examId) : questions;
-    const subjects = Array.from(new Set(scoped.map((q) => q.subject))).sort();
-    return ['All', ...subjects];
-  }, [questions, examId]);
+  /** Everything for the chosen exam — the base every other filter narrows. */
+  const examScoped = useMemo(
+    () => questions.filter((q) => (examId ? q.exam_id === examId : true)),
+    [questions, examId]
+  );
 
-  const visible = questions
-    .filter((q) => (examId ? q.exam_id === examId : true))
-    .filter((q) => (subjectFilter === 'All' ? true : q.subject === subjectFilter))
-    .filter((q) =>
-      typeFilter === 'All types'
-        ? true
-        : typeFilter === 'MCQ'
-          ? q.question_type === 'mcq'
-          : q.question_type === 'theoretical'
-    );
+  // Subjects and teachers are derived from the questions that actually exist
+  // for this exam — no hardcoded lists.
+  const subjectFilters = useMemo(
+    () => ['All', ...Array.from(new Set(examScoped.map((q) => q.subject))).sort()],
+    [examScoped]
+  );
+  const teacherFilters = useMemo(
+    () => [
+      'All teachers',
+      ...Array.from(new Set(examScoped.map((q) => q.teacher?.full_name ?? 'Unknown'))).sort(),
+    ],
+    [examScoped]
+  );
+
+  /**
+   * Switching exams used to leave a subject or teacher chip selected that the
+   * new exam has no questions for, collapsing the list to nothing with no
+   * explanation. Drop any selection the current exam cannot satisfy.
+   */
+  useEffect(() => {
+    if (subjectFilter !== 'All' && !subjectFilters.includes(subjectFilter)) setSubjectFilter('All');
+    if (teacherFilter !== 'All teachers' && !teacherFilters.includes(teacherFilter)) {
+      setTeacherFilter('All teachers');
+    }
+  }, [subjectFilters, teacherFilters, subjectFilter, teacherFilter]);
+
+  const visible = examScoped
+    .filter((q) => subjectFilter === 'All' || q.subject === subjectFilter)
+    .filter(
+      (q) => teacherFilter === 'All teachers' || (q.teacher?.full_name ?? 'Unknown') === teacherFilter
+    )
+    .filter((q) => typeFilter === 'All types' || q.question_type === FILTER_TYPE[typeFilter])
+    .filter((q) => statusFilter === 'All' || q.status === FILTER_STATUS[statusFilter]);
+
+  const pendingCount = visible.filter((q) => q.status === 'submitted').length;
+  const anyFilter =
+    !!examId ||
+    subjectFilter !== 'All' ||
+    teacherFilter !== 'All teachers' ||
+    typeFilter !== 'All types' ||
+    statusFilter !== 'All';
+
+  const clearFilters = () => {
+    setExamId(null);
+    setSubjectFilter('All');
+    setTeacherFilter('All teachers');
+    setTypeFilter('All types');
+    setStatusFilter('All');
+  };
+
+  // Page the filtered list. Approving a question mutates it in place, so the
+  // current page stays put instead of jumping back to the top.
+  const pager = usePagination(visible, 25);
 
   return (
     <Screen>
@@ -102,11 +179,67 @@ export default function QuestionPoolScreen() {
         <Chips options={subjectFilters} value={subjectFilter} onChange={setSubjectFilter} />
       </View>
       <View style={styles.filterWrap}>
+        <Chips options={teacherFilters} value={teacherFilter} onChange={setTeacherFilter} />
+      </View>
+      <View style={styles.filterWrap}>
         <Chips options={TYPE_FILTERS} value={typeFilter} onChange={setTypeFilter} />
       </View>
+      <View style={styles.filterWrap}>
+        <Chips options={STATUS_FILTERS} value={statusFilter} onChange={setStatusFilter} />
+      </View>
+
+      {loadError ? (
+        <Text style={styles.error}>Could not load the bank: {loadError}</Text>
+      ) : (
+        <View style={styles.countRow}>
+          <Text style={styles.count}>
+            Showing {visible.length} of {examScoped.length}
+            {examId ? ' in this exam' : ''}
+            {questions.length !== examScoped.length ? ` · ${questions.length} in the bank` : ''}
+            {pendingCount > 0 ? ` · ${pendingCount} awaiting approval` : ''}
+          </Text>
+          {anyFilter ? (
+            <Pressable onPress={clearFilters} hitSlop={8}>
+              <Text style={styles.clear}>Clear filters</Text>
+            </Pressable>
+          ) : null}
+        </View>
+      )}
+
+      <Pagination
+        page={pager.page}
+        pageCount={pager.pageCount}
+        from={pager.from}
+        to={pager.to}
+        total={pager.total}
+        pageSize={pager.pageSize}
+        onPage={pager.setPage}
+        onPageSize={pager.setPageSize}
+      />
+
       <FlatList
-        data={visible}
+        data={pager.pageItems}
         keyExtractor={(item) => item.id}
+        // A page is small, but never clip mounted rows — the whole point is
+        // that every question on the page is actually on screen.
+        initialNumToRender={25}
+        maxToRenderPerBatch={25}
+        windowSize={21}
+        removeClippedSubviews={false}
+        contentContainerStyle={styles.listContent}
+        ListFooterComponent={
+          pager.pageCount > 1 ? (
+            <Pagination
+              page={pager.page}
+              pageCount={pager.pageCount}
+              from={pager.from}
+              to={pager.to}
+              total={pager.total}
+              pageSize={pager.pageSize}
+              onPage={pager.setPage}
+            />
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -117,11 +250,13 @@ export default function QuestionPoolScreen() {
         ListEmptyComponent={
           <EmptyState
             icon="library-outline"
-            title="Pool is empty"
+            title={questions.length === 0 ? 'Pool is empty' : 'Nothing matches these filters'}
             subtitle={
-              examId
-                ? "No questions submitted for this exam yet — teachers' uploads appear here in real time."
-                : 'Questions uploaded by teachers appear here in real time.'
+              questions.length === 0
+                ? examId
+                  ? "No questions submitted for this exam yet — teachers' uploads appear here in real time."
+                  : 'Questions uploaded by teachers appear here in real time.'
+                : `${questions.length} question(s) are in the bank — clear the exam, subject, type or status filter above to see them.`
             }
           />
         }
@@ -139,6 +274,7 @@ export default function QuestionPoolScreen() {
             <Text style={styles.body}>{item.body}</Text>
             <Text style={styles.meta}>
               {item.exam?.name ? `${item.exam.name} · ` : ''}
+              {item.section_name ? `${item.section_name} · ` : ''}
               {item.subject} · {item.difficulty} · {item.marks} mk · by{' '}
               {item.teacher?.full_name ?? 'Unknown'}
             </Text>
@@ -161,8 +297,29 @@ export default function QuestionPoolScreen() {
 const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     filterWrap: {
-      marginBottom: spacing.md,
+      marginBottom: spacing.sm,
     },
+    countRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: spacing.sm,
+      marginBottom: spacing.sm,
+    },
+    count: {
+      color: colors.textDim,
+      fontSize: 12,
+      fontWeight: '700',
+      flex: 1,
+    },
+    clear: { color: colors.primary, fontSize: 12, fontWeight: '800' },
+    error: {
+      color: colors.danger,
+      fontSize: 12,
+      fontWeight: '700',
+      marginBottom: spacing.sm,
+    },
+    listContent: { paddingBottom: spacing.xl },
     header: {
       flexDirection: 'row',
       justifyContent: 'space-between',

@@ -13,6 +13,7 @@ import {
 import { Badge, Button, Card, Chips, EmptyState, Input, Screen } from '../../components/UI';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
+import { identifyLeak } from '../../lib/api';
 import { shortHash, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
 import { radius, spacing, ThemeColors } from '../../lib/theme';
@@ -53,6 +54,17 @@ export default function CustodyScreen() {
   const [target, setTarget] = useState<CopyWithPaper | null>(null);
   const [location, setLocation] = useState('');
   const [working, setWorking] = useState(false);
+
+  // Leak forensics: resolve a code lifted from a photographed page fragment.
+  const [traceInput, setTraceInput] = useState('');
+  const [tracing, setTracing] = useState(false);
+  const [traceResult, setTraceResult] = useState<{
+    via: string;
+    copyNumber: number;
+    paper: string;
+    location: string;
+    chain: CustodyEvent[];
+  } | null>(null);
 
   const load = useCallback(async () => {
     const [{ data: eventRows }, { data: copyRows }] = await Promise.all([
@@ -137,13 +149,92 @@ export default function CustodyScreen() {
     );
   };
 
+  /**
+   * Resolve a code scanned off a leaked page. The server marks the copy
+   * leaked, which fires a CRITICAL alert to every admin dashboard via the
+   * custody trigger, and returns the full chain of custody.
+   */
+  const runTrace = async () => {
+    const code = traceInput.trim();
+    if (!code) {
+      showAlert('Nothing to trace', 'Scan or type the code from the page watermark.');
+      return;
+    }
+    setTracing(true);
+    setTraceResult(null);
+    try {
+      // A photo may yield either the tiled watermark code or the header QR.
+      const res = await identifyLeak(
+        code.trim().startsWith('{') ? { qr_payload: code } : { trace_code: code }
+      );
+      setTraceResult({
+        via: res.via,
+        copyNumber: res.copy.copy_number,
+        paper: res.copy.paper?.title ?? 'Unknown paper',
+        location: res.copy.current_location,
+        chain: res.custody_chain ?? [],
+      });
+      setTraceInput('');
+      void load();
+    } catch (e) {
+      showAlert('Could not trace', e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setTracing(false);
+    }
+  };
+
   const advance = NEXT_STEP[target?.status ?? 'delivered'];
 
   return (
-    <Screen>
+    <Screen scroll={view === 'Leak Trace'}>
       <View style={{ marginBottom: spacing.md }}>
-        <Chips options={['Live Feed', 'Copies']} value={view} onChange={setView} />
+        <Chips options={['Live Feed', 'Copies', 'Leak Trace']} value={view} onChange={setView} />
       </View>
+
+      {view === 'Leak Trace' ? (
+        <>
+          <Card>
+            <Text style={styles.traceTitle}>Identify a leaked copy</Text>
+            <Text style={styles.traceBlurb}>
+              Every printed page is tiled with its own QR watermark, so a photo of any part of the
+              sheet identifies the copy. Scan one of the faint codes (or read the TRACE line in the
+              footer) and enter it here — the full header QR payload works too.
+            </Text>
+            <Input
+              label="Trace code from the page"
+              placeholder="SAE:ABCD2345EFGH"
+              autoCapitalize="characters"
+              value={traceInput}
+              onChangeText={setTraceInput}
+            />
+            <Button
+              title="Identify & raise alert"
+              icon="search-outline"
+              variant="danger"
+              loading={tracing}
+              onPress={() => void runTrace()}
+            />
+          </Card>
+
+          {traceResult ? (
+            <Card>
+              <Text style={styles.traceHit}>🔴 Copy #{traceResult.copyNumber} identified</Text>
+              <Text style={styles.traceLine}>Paper: {traceResult.paper}</Text>
+              <Text style={styles.traceLine}>Identified via: {traceResult.via}</Text>
+              <Text style={styles.traceLine}>Last known location: {traceResult.location}</Text>
+              <Text style={styles.traceLine}>
+                A critical alert has been pushed to every admin dashboard.
+              </Text>
+              <Text style={styles.traceChainTitle}>Chain of custody</Text>
+              {traceResult.chain.map((event) => (
+                <Text key={event.id} style={styles.traceChain}>
+                  · {event.event_type} — {event.location} ({timeAgo(event.created_at)})
+                </Text>
+              ))}
+            </Card>
+          ) : null}
+        </>
+      ) : null}
 
       {view === 'Live Feed' ? (
         <FlatList
@@ -182,7 +273,7 @@ export default function CustodyScreen() {
             </Card>
           )}
         />
-      ) : (
+      ) : view === 'Copies' ? (
         <FlatList
           data={copies}
           keyExtractor={(item) => item.id}
@@ -218,7 +309,7 @@ export default function CustodyScreen() {
             </Pressable>
           )}
         />
-      )}
+      ) : null}
 
       {/* Checkpoint scan modal (simulates the invigilator / transport scans) */}
       <Modal transparent visible={!!target} animationType="fade" onRequestClose={() => setTarget(null)}>
@@ -272,6 +363,23 @@ export default function CustodyScreen() {
 
 const makeStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    traceTitle: { color: colors.text, fontSize: 15, fontWeight: '800', marginBottom: 4 },
+    traceBlurb: {
+      color: colors.textDim,
+      fontSize: 12,
+      lineHeight: 18,
+      marginBottom: spacing.md,
+    },
+    traceHit: { color: colors.danger, fontSize: 15, fontWeight: '800', marginBottom: spacing.sm },
+    traceLine: { color: colors.textDim, fontSize: 13, lineHeight: 19 },
+    traceChainTitle: {
+      color: colors.text,
+      fontSize: 12,
+      fontWeight: '800',
+      marginTop: spacing.md,
+      marginBottom: 4,
+    },
+    traceChain: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
     eventHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
