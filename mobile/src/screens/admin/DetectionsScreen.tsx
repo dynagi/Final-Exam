@@ -1,5 +1,6 @@
 /**
- * QR Detections — the security event feed.
+ * QR Detections — the security event feed, presented as a closed ledger the
+ * Admin opens.
  *
  * Every printed page is divided into a grid of frames, each carrying its own
  * HMAC-tagged QR. When a monitoring client (or an admin pasting a code)
@@ -9,16 +10,42 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { Badge, Button, Card, EmptyState, Input, Screen, SectionTitle } from '../../components/UI';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Animated,
+  Easing,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  OpenBook,
+  PageScroll,
+  PageTitle,
+  Rule,
+  useArchiveLayout,
+  useArchivePalette,
+  useReducedMotion,
+} from '../../components/ArchiveBook';
+import { BookButton, BookField, CenteredHeading, Seal } from '../../components/ArchiveControls';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { fetchDetections, reportDetection } from '../../lib/api';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
-import { radius, spacing, ThemeColors } from '../../lib/theme';
+import { serif, toneFor } from '../../lib/theme';
 import { QrDetection } from '../../lib/types';
+import { useAdminIndex } from './useAdminIndex';
+
+const SELF = 'Detections';
 
 /** One label/value line, rendered only when the value is actually present. */
 function Field({
@@ -41,7 +68,39 @@ function Field({
 
 export default function DetectionsScreen() {
   const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const p = useArchivePalette();
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const { stacked, outerPad, sidebarMode, bookWidth, pageHeight } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  const reducedMotion = useReducedMotion();
+
+  const [indexOpen, setIndexOpen] = useState(false);
+
+  // The ledger starts closed with NOTHING behind the cover mounted. Tapping
+  // mounts the open book (so pages only exist once the animation begins) and
+  // then swings the cover away to reveal it; `opened` unmounts the cover once
+  // the swing finishes.
+  const [revealing, setRevealing] = useState(false);
+  const [opened, setOpened] = useState(false);
+  const coverAnim = useRef(new Animated.Value(0)).current;
+
+  const openLedger = () => {
+    if (revealing) return;
+    if (reducedMotion) {
+      setRevealing(true);
+      setOpened(true);
+      return;
+    }
+    setRevealing(true);
+    Animated.timing(coverAnim, {
+      toValue: 1,
+      duration: 1050,
+      easing: Easing.inOut(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) setOpened(true);
+    });
+  };
 
   const [detections, setDetections] = useState<QrDetection[]>([]);
   const [grid, setGrid] = useState({ cols: 5, rows: 7 });
@@ -129,66 +188,77 @@ export default function DetectionsScreen() {
       (d) => d.copy_id && d.copy_id === item.copy_id && d.detected_at < item.detected_at
     );
 
-  return (
-    <Screen>
-      <FlatList
-        data={detections}
-        keyExtractor={(item) => item.id}
-        initialNumToRender={12}
-        removeClippedSubviews={false}
-        contentContainerStyle={{ paddingBottom: spacing.xl }}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void onRefresh()}
-            tintColor={colors.text}
-          />
-        }
-        ListHeaderComponent={
-          <>
-            <Card>
-              <Text style={styles.introTitle}>Frame watermark monitoring</Text>
-              <Text style={styles.intro}>
-                Each printed page carries a {grid.cols} × {grid.rows} grid of unique QR codes, so a
-                photograph of any part of a sheet identifies the copy, the page and the frame.
-                Repeat sightings of the same frame by the same scanner within {dedupWindow}s are
-                counted once.
-              </Text>
-              <Input
-                label="Report a decoded token"
-                placeholder="SAE:VFMHENF8BRJB0107G9NP"
-                autoCapitalize="characters"
-                value={token}
-                onChangeText={setToken}
-              />
-              <Button
-                title="Record security event"
-                icon="scan-outline"
-                variant="danger"
-                loading={reporting}
-                onPress={() => void report()}
-              />
-            </Card>
-            {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
-            <SectionTitle title={`Security events (${detections.length})`} />
-          </>
-        }
-        ListEmptyComponent={
-          loadError ? null : (
-            <EmptyState
-              icon="shield-checkmark-outline"
-              title="No watermark detections"
-              subtitle="Nothing has reported seeing a printed page. Events appear here the moment a frame QR is read anywhere."
-            />
-          )
-        }
-        renderItem={({ item }) => {
+  const { items, onSelect } = useAdminIndex({
+    active: SELF,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
+
+  /* -------------------------------- pages -------------------------------- */
+
+  const leftPage = (
+    <PageScroll>
+      <PageTitle center size={[19, 27]}>
+        Frame Watermark Monitoring
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      <Text style={styles.intro}>
+        Each printed page carries a {grid.cols} × {grid.rows} grid of unique QR codes, so a
+        photograph of any part of a sheet identifies the copy, the page and the frame. Repeat
+        sightings of the same frame by the same scanner within {dedupWindow}s are counted once.
+      </Text>
+
+      <Rule gap={16} />
+
+      <CenteredHeading>Report a Decoded Token</CenteredHeading>
+      <View style={styles.block}>
+        <BookField
+          label="Token"
+          placeholder="SAE:VFMHENF8BRJB0107G9NP"
+          autoCapitalize="characters"
+          value={token}
+          onChangeText={setToken}
+        />
+      </View>
+
+      <View style={styles.reportBtn}>
+        <BookButton
+          title="Record security event"
+          icon="scan-outline"
+          variant="gold"
+          loading={reporting}
+          onPress={() => void report()}
+        />
+      </View>
+
+      {loadError ? <Text style={styles.error}>{loadError}</Text> : null}
+    </PageScroll>
+  );
+
+  const rightPage = (
+    <PageScroll>
+      <PageTitle center size={[19, 27]}>
+        Security Events
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      {detections.length === 0 ? (
+        <View style={styles.empty}>
+          <Ionicons name="shield-checkmark-outline" size={26} color={p.inkFaint} />
+          <Text style={styles.emptyTitle}>No watermark detections</Text>
+          <Text style={styles.emptyText}>
+            Nothing has reported seeing a printed page. Events appear here the moment a frame QR
+            is read anywhere.
+          </Text>
+        </View>
+      ) : (
+        detections.map((item) => {
           const history = historyFor(item);
           const located = item.latitude != null && item.longitude != null;
           return (
-            <Card>
-              <View style={styles.header}>
-                <Badge status={item.alert_level} />
+            <View key={item.id} style={styles.card}>
+              <View style={styles.cardHead}>
+                <Seal label={item.alert_level.toUpperCase()} tone={toneFor(colors, item.alert_level)} />
                 <Text style={styles.time}>{timeAgo(item.detected_at)}</Text>
               </View>
 
@@ -233,7 +303,7 @@ export default function DetectionsScreen() {
               </View>
 
               <View style={styles.counts}>
-                <Ionicons name="repeat-outline" size={14} color={colors.warning} />
+                <Ionicons name="repeat-outline" size={13} color={p.warning} />
                 <Text style={styles.countsText}>
                   Seen {item.detection_count}×{' '}
                   {item.detection_count > 1
@@ -246,51 +316,263 @@ export default function DetectionsScreen() {
                     : ' · first event for this copy'}
                 </Text>
               </View>
-            </Card>
+            </View>
           );
-        }}
+        })
+      )}
+    </PageScroll>
+  );
+
+  const coverInner = (
+    <>
+      <View style={[styles.coverGilt, { borderColor: p.coverHighlight }]} pointerEvents="none" />
+      <View style={[styles.coverSpine, { backgroundColor: p.coverEdge }]} />
+      <View style={styles.coverBody}>
+        <Ionicons name="lock-closed" size={18} color={p.coverHighlight} style={styles.coverIcon} />
+        <Text style={[styles.coverTitle, { color: p.onCover }]}>
+          THE SECURITY{'\n'}INCIDENT LEDGER
+        </Text>
+        <Text style={[styles.coverHint, { color: p.coverHighlight }]}>Tap to open</Text>
+      </View>
+    </>
+  );
+
+  // Nothing but the shut cover exists until the Admin taps it — the open
+  // pages are not in the tree yet, so there is nothing for the cover to sit
+  // in front of.
+  const book = !revealing ? (
+    <View style={styles.closedStage}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Open The Security Incident Ledger"
+        onPress={openLedger}
+        style={[
+          styles.cover,
+          styles.coverStandalone,
+          {
+            width: Math.min((bookWidth ?? 420) * 0.52, 380),
+            height: pageHeight ?? 480,
+            backgroundColor: p.cover,
+            borderColor: p.coverEdge,
+          },
+        ]}
+      >
+        {coverInner}
+      </Pressable>
+    </View>
+  ) : (
+    <View style={styles.bookHolder}>
+      <OpenBook
+        left={leftPage}
+        right={rightPage}
+        leftFolio="Frame monitoring"
+        rightFolio={`${detections.length} event${detections.length === 1 ? '' : 's'} on file`}
       />
-    </Screen>
+
+      {/* The cover swings away on its spine to reveal the spread mounted
+          beneath it — it is never shown floating over an already-open book. */}
+      {!opened ? (
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.coverWrap,
+            {
+              opacity: coverAnim.interpolate({
+                inputRange: [0, 0.55, 1],
+                outputRange: [1, 1, 0],
+              }),
+              transform: [
+                { perspective: 1600 },
+                {
+                  rotateY: coverAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['0deg', '-100deg'],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
+          <View
+            style={[
+              styles.cover,
+              styles.coverInFlight,
+              { backgroundColor: p.cover, borderColor: p.coverEdge },
+            ]}
+          >
+            {coverInner}
+          </View>
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Admin · QR Detections"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+        )}
+
+        {stacked ? (
+          <Animated.ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingHorizontal: outerPad, paddingBottom: 20 + insets.bottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={p.gold} />
+            }
+          >
+            {book}
+          </Animated.ScrollView>
+        ) : (
+          <View style={[styles.stage, { paddingHorizontal: outerPad }]}>{book}</View>
+        )}
+      </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
+      />
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    introTitle: { color: colors.text, fontSize: 15, fontWeight: '800', marginBottom: 4 },
-    intro: { color: colors.textDim, fontSize: 12, lineHeight: 18, marginBottom: spacing.md },
-    error: { color: colors.danger, fontSize: 12, fontWeight: '700', marginTop: spacing.sm },
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      marginBottom: spacing.sm,
+    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    scrollContent: { paddingVertical: 16 },
+    stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
+    bookHolder: { alignSelf: 'stretch' },
+
+    /* left page */
+    intro: { fontFamily: serif, fontSize: 12.5, color: p.inkDim, lineHeight: 19 },
+    block: { marginTop: 10, marginBottom: 4 },
+    reportBtn: { alignItems: 'center', marginTop: 14 },
+    error: { fontFamily: serif, fontSize: 11.5, color: p.danger, marginTop: 12, lineHeight: 16 },
+
+    /* right page */
+    empty: { alignItems: 'center', gap: 8, paddingVertical: 28, paddingHorizontal: 10 },
+    emptyTitle: { fontFamily: serif, fontSize: 15, fontWeight: '700', color: p.ink },
+    emptyText: {
+      fontFamily: serif,
+      fontSize: 12.5,
+      lineHeight: 18,
+      color: p.inkDim,
+      textAlign: 'center',
     },
-    time: { color: colors.textDim, fontSize: 12 },
-    title: { color: colors.text, fontSize: 15, fontWeight: '700' },
+    card: {
+      borderWidth: 1,
+      borderColor: p.rule,
+      backgroundColor: p.pageShade,
+      borderRadius: 3,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      marginBottom: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 5,
+      elevation: 1,
+    },
+    cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    time: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint },
+    title: { fontFamily: serif, fontSize: 13.5, fontWeight: '700', color: p.ink, marginTop: 7 },
     locator: {
-      color: colors.accent,
-      fontSize: 13,
-      fontWeight: '800',
+      fontFamily: serif,
+      fontSize: 11.5,
+      fontWeight: '700',
+      color: p.gold,
       marginTop: 2,
-      marginBottom: spacing.sm,
+      marginBottom: 8,
     },
-    fields: {
-      borderTopWidth: 1,
-      borderTopColor: colors.border,
-      paddingTop: spacing.sm,
-      gap: 3,
-    },
-    field: { flexDirection: 'row', gap: spacing.sm, alignItems: 'flex-start' },
-    fieldLabel: { color: colors.textFaint, fontSize: 11, width: 106 },
-    fieldValue: { color: colors.textDim, fontSize: 11, flex: 1, lineHeight: 16 },
+    fields: { borderTopWidth: 1, borderTopColor: p.rule, paddingTop: 8, gap: 3 },
+    field: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
+    fieldLabel: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint, width: 96 },
+    fieldValue: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, flex: 1, lineHeight: 15 },
     counts: {
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 6,
-      marginTop: spacing.sm,
-      borderRadius: radius.sm,
-      backgroundColor: colors.surfaceAlt,
-      padding: spacing.sm,
+      marginTop: 9,
+      borderRadius: 3,
+      backgroundColor: `${p.pageDeep}33`,
+      padding: 8,
     },
-    countsText: { color: colors.textDim, fontSize: 11, lineHeight: 16, flex: 1 },
+    countsText: { fontFamily: serif, fontSize: 10.5, lineHeight: 15, color: p.inkDim, flex: 1 },
+
+    /* closed cover */
+    coverWrap: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // Shared cover chrome. Sizing is applied separately for the two states:
+    // percentage-based while overlaying the mounted book, explicit numeric
+    // dimensions while standing alone before the book exists at all.
+    cover: {
+      borderRadius: 8,
+      borderWidth: 1,
+      overflow: 'hidden',
+      alignItems: 'center',
+      justifyContent: 'center',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 14 },
+      shadowOpacity: 0.45,
+      shadowRadius: 26,
+      elevation: 16,
+    },
+    coverStandalone: {},
+    coverInFlight: { width: '92%', maxWidth: 460, height: '86%', maxHeight: 560 },
+    closedStage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 },
+    coverGilt: {
+      position: 'absolute',
+      top: 12,
+      left: 12,
+      right: 12,
+      bottom: 12,
+      borderRadius: 5,
+      borderWidth: 1,
+      opacity: 0.55,
+    },
+    coverSpine: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 14, opacity: 0.6 },
+    coverBody: { alignItems: 'center', gap: 10, paddingHorizontal: 24 },
+    coverIcon: { marginBottom: 2 },
+    coverTitle: {
+      fontFamily: serif,
+      fontSize: 21,
+      fontWeight: '700',
+      letterSpacing: 2.4,
+      textAlign: 'center',
+      lineHeight: 30,
+    },
+    coverHint: {
+      fontFamily: serif,
+      fontSize: 10.5,
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      marginTop: 6,
+    },
   });

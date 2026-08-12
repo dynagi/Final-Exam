@@ -1,23 +1,45 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { LinearGradient } from 'expo-linear-gradient';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Animated,
   FlatList,
   Modal,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { Badge, Button, Card, Chips, EmptyState, Input, Screen } from '../../components/UI';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  PageGrain,
+  useArchiveLayout,
+  useArchivePalette,
+  usePageTurn,
+} from '../../components/ArchiveBook';
+import { Badge, Button, Card, EmptyState, Input } from '../../components/UI';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { identifyLeak } from '../../lib/api';
 import { shortHash, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
-import { radius, spacing, ThemeColors } from '../../lib/theme';
+import { radius, serif, spacing, ThemeColors } from '../../lib/theme';
 import { CopyStatus, CustodyEvent, PaperCopy } from '../../lib/types';
+import { useAdminIndex } from './useAdminIndex';
+
+const SELF = 'Custody';
+
+/** The three physical pages bound into the custody book, in order. */
+const PAGES = ['Live Feed', 'Copies', 'Leak Trace'] as const;
+type PageName = (typeof PAGES)[number];
 
 type CopyWithPaper = PaperCopy & { paper?: { title: string } | null };
 type EventWithCopy = CustodyEvent & { copy?: { copy_number: number; paper_id: string } | null };
@@ -44,9 +66,24 @@ const NEXT_STEP: Partial<
 
 export default function CustodyScreen() {
   const { colors } = useTheme();
+  const p = useArchivePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
+  const bookStyles = useMemo(() => makeBookStyles(p), [p]);
+  const { stacked, outerPad, sidebarMode } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  // Wide enough to bind all three pages open side by side, as one book.
+  const wide = !stacked;
+  const [indexOpen, setIndexOpen] = useState(false);
 
-  const [view, setView] = useState('Live Feed');
+  const [view, setView] = useState<PageName>('Live Feed');
+  // A physical page turn between the three bound sections (narrow screens only).
+  const pageTurn = usePageTurn({ duration: 620, angle: 80 });
+  const switchView = (next: PageName) => {
+    if (next === view) return;
+    const from = PAGES.indexOf(view);
+    const to = PAGES.indexOf(next);
+    pageTurn.turn(to > from ? 1 : -1, () => setView(next));
+  };
   const [events, setEvents] = useState<EventWithCopy[]>([]);
   const [copies, setCopies] = useState<CopyWithPaper[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -185,14 +222,16 @@ export default function CustodyScreen() {
 
   const advance = NEXT_STEP[target?.status ?? 'delivered'];
 
-  return (
-    <Screen scroll={view === 'Leak Trace'}>
-      <View style={{ marginBottom: spacing.md }}>
-        <Chips options={['Live Feed', 'Copies', 'Leak Trace']} value={view} onChange={setView} />
-      </View>
+  const { items, onSelect } = useAdminIndex({
+    active: SELF,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
 
-      {view === 'Leak Trace' ? (
-        <>
+  /** Content for one of the three bound pages — identical to the original views. */
+  const renderPageContent = (name: PageName) => {
+    if (name === 'Leak Trace') {
+      return (
+        <ScrollView showsVerticalScrollIndicator={false}>
           <Card>
             <Text style={styles.traceTitle}>Identify a leaked copy</Text>
             <Text style={styles.traceBlurb}>
@@ -233,10 +272,12 @@ export default function CustodyScreen() {
               ))}
             </Card>
           ) : null}
-        </>
-      ) : null}
+        </ScrollView>
+      );
+    }
 
-      {view === 'Live Feed' ? (
+    if (name === 'Live Feed') {
+      return (
         <FlatList
           data={events}
           keyExtractor={(item) => item.id}
@@ -273,43 +314,133 @@ export default function CustodyScreen() {
             </Card>
           )}
         />
-      ) : view === 'Copies' ? (
-        <FlatList
-          data={copies}
-          keyExtractor={(item) => item.id}
-          refreshControl={
-            <RefreshControl
-              refreshing={refreshing}
-              onRefresh={() => void onRefresh()}
-              tintColor={colors.text}
-            />
-          }
-          ListEmptyComponent={
-            <EmptyState
-              icon="qr-code-outline"
-              title="No copies printed yet"
-              subtitle="Copies appear after a print ceremony, each with a unique QR + fingerprint."
-            />
-          }
-          renderItem={({ item }) => (
-            <Pressable onPress={() => openCopy(item)}>
-              <Card>
-                <View style={styles.eventHeader}>
-                  <Text style={styles.copyTitle}>
-                    Copy #{item.copy_number} — {item.paper?.title ?? 'Paper'}
-                  </Text>
-                  <Badge status={item.status} />
-                </View>
-                <Text style={styles.note}>📍 {item.current_location}</Text>
-                <View style={styles.hashRow}>
-                  <Ionicons name="finger-print" size={12} color={colors.textDim} />
-                  <Text style={styles.hash}>fp {item.fingerprint_hash.slice(0, 16)}…</Text>
-                </View>
-              </Card>
+      );
+    }
+
+    return (
+      <FlatList
+        data={copies}
+        keyExtractor={(item) => item.id}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => void onRefresh()}
+            tintColor={colors.text}
+          />
+        }
+        ListEmptyComponent={
+          <EmptyState
+            icon="qr-code-outline"
+            title="No copies printed yet"
+            subtitle="Copies appear after a print ceremony, each with a unique QR + fingerprint."
+          />
+        }
+        renderItem={({ item }) => (
+          <Pressable onPress={() => openCopy(item)}>
+            <Card>
+              <View style={styles.eventHeader}>
+                <Text style={styles.copyTitle}>
+                  Copy #{item.copy_number} — {item.paper?.title ?? 'Paper'}
+                </Text>
+                <Badge status={item.status} />
+              </View>
+              <Text style={styles.note}>📍 {item.current_location}</Text>
+              <View style={styles.hashRow}>
+                <Ionicons name="finger-print" size={12} color={colors.textDim} />
+                <Text style={styles.hash}>fp {item.fingerprint_hash.slice(0, 16)}…</Text>
+              </View>
+            </Card>
+          </Pressable>
+        )}
+      />
+    );
+  };
+
+  const bookArea = (
+    <>
+      {/* Three tabs bound as the edges of the same physical book — selecting
+          one focuses that page without leaving the other two behind. */}
+      <View style={bookStyles.tabRow}>
+        {PAGES.map((name, i) => {
+          const active = name === view;
+          return (
+            <Pressable
+              key={name}
+              onPress={() => switchView(name)}
+              style={[bookStyles.tab, { zIndex: PAGES.length - i }, active && bookStyles.tabActive]}
+            >
+              <Text style={[bookStyles.tabText, active && bookStyles.tabTextActive]}>{name}</Text>
             </Pressable>
-          )}
-        />
-      ) : null}
+          );
+        })}
+      </View>
+
+      {/* ONE open book. Wide screens bind all three pages side by side, with
+          the selected one focused; narrow screens show the focused page full
+          width and turn to the others like a real page flip. */}
+      <View style={bookStyles.book}>
+        {wide ? (
+          <View style={bookStyles.spread}>
+            {PAGES.map((name, i) => (
+              <React.Fragment key={name}>
+                {i > 0 ? <PageGutter palette={p} /> : null}
+                <Pressable
+                  onPress={() => switchView(name)}
+                  style={[
+                    bookStyles.panel,
+                    name === view ? bookStyles.panelFocused : bookStyles.panelDim,
+                  ]}
+                >
+                  <PageGrain />
+                  <View style={bookStyles.panelInner}>
+                    <Text style={bookStyles.panelTitle}>{name}</Text>
+                    <View style={bookStyles.panelBody}>{renderPageContent(name)}</View>
+                  </View>
+                </Pressable>
+              </React.Fragment>
+            ))}
+          </View>
+        ) : (
+          <Animated.View style={[bookStyles.leaf, pageTurn.style]}>
+            <PageGrain />
+            <View style={bookStyles.leafInner}>{renderPageContent(view)}</View>
+            <Animated.View
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, bookStyles.turnShade, pageTurn.shadeStyle]}
+            />
+          </Animated.View>
+        )}
+      </View>
+    </>
+  );
+
+  return (
+    <View style={[bookStyles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Admin · Custody"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+
+      <View style={bookStyles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+        )}
+
+        <View style={[bookStyles.stage, { paddingHorizontal: outerPad, paddingBottom: insets.bottom }]}>
+          {bookArea}
+        </View>
+      </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
+      />
 
       {/* Checkpoint scan modal (simulates the invigilator / transport scans) */}
       <Modal transparent visible={!!target} animationType="fade" onRequestClose={() => setTarget(null)}>
@@ -357,7 +488,21 @@ export default function CustodyScreen() {
           </View>
         </View>
       </Modal>
-    </Screen>
+    </View>
+  );
+}
+
+/** A bound seam between two pages of the same book — mirrors the book spine. */
+function PageGutter({ palette: p }: { palette: ArchivePalette }) {
+  return (
+    <View style={{ width: 9, backgroundColor: p.coverEdge }}>
+      <LinearGradient
+        colors={['rgba(0,0,0,0.5)', 'rgba(0,0,0,0.08)', 'rgba(0,0,0,0.5)']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </View>
   );
 }
 
@@ -448,4 +593,81 @@ const makeStyles = (colors: ThemeColors) =>
       fontSize: 13,
       marginBottom: spacing.lg,
     },
+  });
+
+/** The three-page custody book: tab spine + parchment leaf with stacked page edges. */
+const makeBookStyles = (p: ArchivePalette) =>
+  StyleSheet.create({
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    stage: { flex: 1, paddingVertical: 14 },
+    tabRow: { flexDirection: 'row', marginBottom: 2, paddingHorizontal: 6 },
+    tab: {
+      flex: 1,
+      marginRight: -1,
+      borderWidth: 1,
+      borderColor: p.pamphletEdge,
+      borderBottomWidth: 0,
+      borderTopLeftRadius: 5,
+      borderTopRightRadius: 5,
+      paddingVertical: 8,
+      alignItems: 'center',
+      backgroundColor: `${p.pageDeep}55`,
+    },
+    tabActive: {
+      backgroundColor: p.page,
+      paddingVertical: 10,
+    },
+    tabText: {
+      fontFamily: serif,
+      fontSize: 11.5,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      color: p.inkFaint,
+      textTransform: 'uppercase',
+    },
+    tabTextActive: { color: p.ink },
+    // The book cover: one continuous mahogany frame binding all three pages.
+    book: {
+      flex: 1,
+      backgroundColor: p.cover,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: p.coverEdge,
+      padding: 6,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 8 },
+      shadowOpacity: 0.35,
+      shadowRadius: 16,
+      elevation: 8,
+    },
+    spread: { flex: 1, flexDirection: 'row' },
+    panel: {
+      flex: 1,
+      backgroundColor: p.page,
+      overflow: 'hidden',
+    },
+    // The tab-selected page reads as the one currently open/focused.
+    panelFocused: { opacity: 1 },
+    panelDim: { opacity: 0.72 },
+    panelInner: { flex: 1, padding: spacing.md },
+    panelTitle: {
+      fontFamily: serif,
+      fontSize: 13,
+      fontWeight: '700',
+      letterSpacing: 0.6,
+      color: p.ink,
+      textTransform: 'uppercase',
+      textAlign: 'center',
+      marginBottom: spacing.sm,
+    },
+    panelBody: { flex: 1 },
+    leaf: {
+      flex: 1,
+      backgroundColor: p.page,
+      borderRadius: 4,
+      overflow: 'hidden',
+    },
+    leafInner: { flex: 1, padding: spacing.md },
+    turnShade: { backgroundColor: '#000' },
   });

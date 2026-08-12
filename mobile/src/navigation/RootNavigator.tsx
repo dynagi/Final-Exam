@@ -147,17 +147,37 @@ function TeacherTabs() {
       <Tabs.Screen
         name="TeacherDashboard"
         component={TeacherDashboard}
-        options={{ title: 'Dashboard', tabBarIcon: icon('speedometer-outline') }}
+        options={{
+          title: 'Dashboard',
+          tabBarIcon: icon('speedometer-outline'),
+          // Carries the archive header and its own index rail, so the app
+          // chrome stands down here. Upload and My Questions keep theirs.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Upload"
         component={UploadQuestionScreen}
-        options={{ title: 'Upload Questions', tabBarLabel: 'Upload', tabBarIcon: icon('cloud-upload-outline') }}
+        options={{
+          title: 'Upload Questions',
+          tabBarLabel: 'Upload',
+          tabBarIcon: icon('cloud-upload-outline'),
+          // Carries the archive header and its own index rail.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="MyQuestions"
         component={MyQuestionsScreen}
-        options={{ title: 'My Questions', tabBarIcon: icon('list-outline') }}
+        options={{
+          title: 'My Questions',
+          tabBarIcon: icon('list-outline'),
+          // Carries the archive header and its own index rail.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
     </Tabs.Navigator>
   );
@@ -170,17 +190,41 @@ function SetterTabs() {
       <Tabs.Screen
         name="SetterDashboard"
         component={SetterDashboard}
-        options={{ title: 'Dashboard', tabBarIcon: icon('speedometer-outline') }}
+        options={{
+          title: 'Dashboard',
+          tabBarIcon: icon('speedometer-outline'),
+          // The archive book brings its own header bar (with the profile menu
+          // holding theme + logout) and its own index navigation, so the app
+          // chrome stands down here. Every other tab keeps the normal header
+          // and tab bar, so no route becomes unreachable.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="QuestionPool"
         component={QuestionPoolScreen}
-        options={{ title: 'Question Pool', tabBarLabel: 'Pool', tabBarIcon: icon('library-outline') }}
+        options={{
+          title: 'Question Pool',
+          tabBarLabel: 'Pool',
+          tabBarIcon: icon('library-outline'),
+          // Same treatment as the Dashboard: this screen carries the archive
+          // header and the index rail itself, so the app chrome stands down.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Compose"
         component={ComposePaperScreen}
-        options={{ title: 'Compose Paper', tabBarLabel: 'Compose', tabBarIcon: icon('create-outline') }}
+        options={{
+          title: 'Compose Paper',
+          tabBarLabel: 'Compose',
+          tabBarIcon: icon('create-outline'),
+          // Carries the archive header and index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="MyPapers"
@@ -198,12 +242,25 @@ function AdminTabs() {
       <Tabs.Screen
         name="AdminDashboard"
         component={AdminDashboard}
-        options={{ title: 'Command Center', tabBarLabel: 'Dashboard', tabBarIcon: icon('speedometer-outline') }}
+        options={{
+          title: 'Command Center',
+          tabBarLabel: 'Dashboard',
+          tabBarIcon: icon('speedometer-outline'),
+          // The command centre carries the archive header and the full
+          // eight-entry index rail, so the app chrome stands down here.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Papers"
         component={AdminPapersScreen}
-        options={{ title: 'Papers', tabBarIcon: icon('documents-outline') }}
+        options={{
+          title: 'Papers',
+          tabBarIcon: icon('documents-outline'),
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="PrintPreview"
@@ -223,7 +280,14 @@ function AdminTabs() {
       <Tabs.Screen
         name="Custody"
         component={CustodyScreen}
-        options={{ title: 'Chain of Custody', tabBarLabel: 'Custody', tabBarIcon: icon('location-outline') }}
+        options={{
+          title: 'Chain of Custody',
+          tabBarLabel: 'Custody',
+          tabBarIcon: icon('location-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Detections"
@@ -232,6 +296,9 @@ function AdminTabs() {
           title: 'QR Detections',
           tabBarLabel: 'Detections',
           tabBarIcon: icon('scan-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
         }}
       />
       <Tabs.Screen

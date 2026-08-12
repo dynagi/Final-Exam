@@ -1,26 +1,36 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  OpenBook,
+  Rule,
+  fluid,
+  useArchiveLayout,
+  useArchivePalette,
+  usePageTurn,
+} from '../../components/ArchiveBook';
+import {
+  BookButton,
+  BookField,
+  BookPagination,
+  CenteredHeading,
+  ExamScale,
+  PillRow,
+  PlaqueButton,
+  RequirementsBookmark,
+  Seal,
+} from '../../components/ArchiveControls';
 import PaperPreview from '../../components/PaperPreview';
 import ScrollAlert, { ScrollAlertContent } from '../../components/ScrollAlert';
-import {
-  Button,
-  Card,
-  CeremonyModal,
-  Chips,
-  EmptyState,
-  ExamPicker,
-  Input,
-  Pagination,
-  Screen,
-  SectionProgress,
-  SectionTitle,
-  Select,
-  SelectOption,
-} from '../../components/UI';
+import { CeremonyModal } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
-import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import {
   confirmPaperPreview,
@@ -32,17 +42,23 @@ import {
 import { fetchAll } from '../../lib/db';
 import { CompositionReport, sectionWarning, validateComposition } from '../../lib/examFormats';
 import { supabase } from '../../lib/supabase';
-import { labelFor, radius, spacing, ThemeColors } from '../../lib/theme';
+import { labelFor, serif } from '../../lib/theme';
 import { ExamSetSummary, PaperView, Question } from '../../lib/types';
 import { useScheduledExams } from '../../lib/useExams';
-import { usePagination } from '../../lib/usePagination';
+import { PAGE_SIZES, usePagination } from '../../lib/usePagination';
+import { useSetterIndex } from './useSetterIndex';
+
+const SELF = 'Compose';
 
 export default function ComposePaperScreen() {
   const { profile } = useAuth();
   const setterId = profile?.id;
   const { exams } = useScheduledExams();
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+
+  const p = useArchivePalette();
+  const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => makeStyles(p), [p]);
 
   const [examId, setExamId] = useState<string | null>(null);
   const [setLabel, setSetLabel] = useState<string | null>(null);
@@ -68,6 +84,11 @@ export default function ComposePaperScreen() {
   const [sealing, setSealing] = useState(false);
   /** Centre-screen royal-decree popup for a refused selection. */
   const [decree, setDecree] = useState<ScrollAlertContent | null>(null);
+
+  // Book furniture
+  const [indexOpen, setIndexOpen] = useState(false);
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const [reqOpen, setReqOpen] = useState(false);
 
   const exam = exams.find((e) => e.id === examId) ?? null;
   const format = exam?.format_blueprint ?? null;
@@ -107,7 +128,9 @@ export default function ComposePaperScreen() {
       setSets(res.sets);
       setUsage(res.usage);
       setAllowReuse(res.exam.allow_question_reuse);
-      setSetLabel((prev) => (prev && res.sets.some((s) => s.label === prev) ? prev : res.sets[0]?.label ?? null));
+      setSetLabel((prev) =>
+        prev && res.sets.some((s) => s.label === prev) ? prev : (res.sets[0]?.label ?? null)
+      );
     } catch {
       setSets([]);
     }
@@ -165,6 +188,16 @@ export default function ComposePaperScreen() {
     return owner && owner !== setLabel ? owner : null;
   };
 
+  /** Subject counts in this exam's bank, used to label the filter pills. */
+  const subjectCounts = useMemo(
+    () =>
+      examPool.reduce<Record<string, number>>((acc, q) => {
+        acc[q.subject] = (acc[q.subject] ?? 0) + 1;
+        return acc;
+      }, {}),
+    [examPool]
+  );
+
   const subjectOptions = useMemo(() => {
     const fromFormat = format?.subjects ?? [];
     const fromPool = Array.from(new Set(examPool.map((q) => q.subject)));
@@ -177,7 +210,15 @@ export default function ComposePaperScreen() {
     if (subject !== 'All subjects' && !subjectOptions.includes(subject)) setSubject('All subjects');
   }, [subjectOptions, subject]);
 
-  const visiblePool = examPool.filter((q) => subject === 'All subjects' || q.subject === subject);
+  /**
+   * Memoised: the paginator slices this, and the right leaf holds the sliced
+   * rows in state across a page turn. A new array identity every render would
+   * re-fire that state update and spin the screen.
+   */
+  const visiblePool = useMemo(
+    () => examPool.filter((q) => subject === 'All subjects' || q.subject === subject),
+    [examPool, subject]
+  );
 
   /**
    * Page the bank. Selection lives in `selected` keyed by id, so ticking a
@@ -185,25 +226,6 @@ export default function ComposePaperScreen() {
    * never drops a choice, and the progress meters count the whole selection.
    */
   const pager = usePagination(visiblePool, 25);
-
-  const setOptions: SelectOption[] = sets.map((s) => ({
-    value: s.label,
-    label: s.label,
-    hint:
-      s.status === 'not_started'
-        ? 'Not started'
-        : s.ready
-          ? `${s.report.totals.current} questions · ready`
-          : `${s.report.totals.current}/${s.report.totals.required ?? '—'} questions · incomplete`,
-    tag:
-      s.status === 'not_started'
-        ? undefined
-        : s.status !== 'draft'
-          ? s.status.toUpperCase()
-          : s.ready
-            ? 'READY'
-            : 'INCOMPLETE',
-  }));
 
   /** Fill the current set with what each quota still needs, skipping other sets' questions. */
   const autoFill = () => {
@@ -327,7 +349,7 @@ export default function ComposePaperScreen() {
       return null;
     }
     if (selectedIds.length === 0) {
-      showAlert('No questions', 'Select questions from the bank below.');
+      showAlert('No questions', 'Select questions from the bank on the right page.');
       return null;
     }
     try {
@@ -397,7 +419,10 @@ export default function ComposePaperScreen() {
   const handleSeal = async (values: Record<string, string>) => {
     const passphrase = values.passphrase ?? '';
     if (passphrase.length < 8) {
-      showAlert('Weak passphrase', 'Use at least 8 characters. You will need it again at the print ceremony.');
+      showAlert(
+        'Weak passphrase',
+        'Use at least 8 characters. You will need it again at the print ceremony.'
+      );
       return;
     }
     if (!pendingPaperId) return;
@@ -417,320 +442,410 @@ export default function ComposePaperScreen() {
     }
   };
 
-  if (exams.length === 0) {
-    return (
-      <Screen>
-        <EmptyState
-          icon="calendar-clear-outline"
-          title="No exams scheduled yet"
-          subtitle="Papers are composed for a specific exam. Ask the Admin to schedule one — this screen unlocks automatically."
-        />
-      </Screen>
-    );
-  }
+  /* ------------------------------ page turns ------------------------------ */
+
+  const pageTurn = usePageTurn({ duration: 720, angle: 88 });
+  // The rows the leaf currently shows, held back until the leaf is edge-on so
+  // no question is seen twice mid-turn.
+  const [shownItems, setShownItems] = useState<Question[]>(pager.pageItems);
+  const turning = useRef(false);
+
+  useEffect(() => {
+    if (!turning.current) setShownItems(pager.pageItems);
+  }, [pager.pageItems]);
+
+  const turnToPage = useCallback(
+    (next: number, direction: 1 | -1) => {
+      turning.current = true;
+      pageTurn.turn(direction, () => {
+        pager.setPage(next);
+        turning.current = false;
+      });
+    },
+    [pageTurn, pager]
+  );
+
+  /* --------------------------------- index -------------------------------- */
+
+  const { items, onSelect } = useSetterIndex({
+    active: SELF,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
+
+  /* -------------------------------- derived ------------------------------- */
 
   const canPreview = report.ok && title.trim().length >= 4 && !!setLabel && !locked;
   const shortfall = report.errors[0] ?? null;
+  const reqStatus = enforced
+    ? `${report.totals.current}/${report.totals.required ?? '—'} ${report.ok ? '✓' : '⚠'}`
+    : undefined;
+  const reqTone = !enforced ? p.warning : report.ok ? p.success : p.warning;
 
-  return (
-    <Screen scroll>
-      <SectionTitle title="Exam" />
-      <ExamPicker
-        exams={exams}
-        value={examId}
-        onChange={(id) => {
-          setExamId(id);
-          setSelected({});
-          setTitle('');
-          setSubject('All subjects');
-          setPendingPaperId(null);
-          setView(null);
-        }}
-      />
+  const onPickExam = (id: string) => {
+    setScaleOpen(false);
+    if (id === examId) return;
+    setExamId(id);
+    setSelected({});
+    setTitle('');
+    setSubject('All subjects');
+    setPendingPaperId(null);
+    setView(null);
+  };
 
-      {examId ? (
-        <>
-          <SectionTitle title="Paper set" />
-          <Card>
-            <Select
-              label="Which set are you building?"
-              placeholder={sets.length ? 'Choose a paper set…' : 'Loading sets…'}
-              value={setLabel}
-              options={setOptions}
-              onChange={switchSet}
-              searchable={false}
-              emptyText="The Admin has not configured any paper sets for this exam yet."
-            />
-            {locked ? (
-              <Text style={styles.lockedNote}>
-                🔒 {setLabel} is already {labelFor(activeSet!.status)} and can no longer be edited.
-              </Text>
-            ) : (
-              <Text style={styles.setHint}>
-                Each set is an independent paper.{' '}
-                {allowReuse
-                  ? 'Question reuse across sets is allowed for this exam.'
-                  : 'A question used in one set cannot be used in another.'}
-              </Text>
-            )}
-            {sets.length > 1 ? (
-              <View style={styles.setSummary}>
-                {sets.map((s) => (
+  /* --------------------------------- pages -------------------------------- */
+
+  const leftPage = (
+    <View style={styles.leftPage}>
+      <CenteredHeading>Exam</CenteredHeading>
+      <View style={styles.block}>
+        <PlaqueButton
+          value={exam?.name ?? 'Choose an examination'}
+          icon="reader-outline"
+          accessibilityLabel="Choose examination"
+          onPress={() => setScaleOpen(true)}
+        />
+      </View>
+
+      <CenteredHeading>Paper set</CenteredHeading>
+      <View style={styles.block}>
+        {sets.length === 0 ? (
+          <Text style={styles.hint}>
+            {examId
+              ? 'The Admin has not configured any paper sets for this exam yet.'
+              : 'Pick an examination to see its paper sets.'}
+          </Text>
+        ) : (
+          <>
+            <View style={styles.setTabs}>
+              {sets.map((s) => {
+                const active = s.label === setLabel;
+                const tone =
+                  s.status === 'not_started' ? p.inkFaint : s.ready ? p.success : p.warning;
+                return (
                   <Pressable
                     key={s.label}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${s.label}, ${s.status.replace(/_/g, ' ')}`}
+                    accessibilityState={{ selected: active }}
                     onPress={() => switchSet(s.label)}
-                    style={[styles.setPill, s.label === setLabel && styles.setPillActive]}
+                    style={[
+                      styles.setTab,
+                      { borderColor: active ? p.gold : p.rule },
+                      active && { backgroundColor: p.goldSoft, borderWidth: 2 },
+                    ]}
                   >
-                    <Text
-                      style={[
-                        styles.setPillText,
-                        {
-                          color:
-                            s.status === 'not_started'
-                              ? colors.textDim
-                              : s.ready
-                                ? colors.success
-                                : colors.warning,
-                        },
-                      ]}
-                    >
-                      {s.label} {s.status === 'not_started' ? '—' : s.ready ? '✓' : '⚠'}
+                    <Text style={[styles.setTabText, { color: active ? p.ink : p.inkDim }]}>
+                      {s.label}
+                    </Text>
+                    <Text style={[styles.setTabMark, { color: tone }]}>
+                      {s.status === 'not_started' ? '—' : s.ready ? '✓' : '⚠'}
                     </Text>
                   </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </Card>
-        </>
-      ) : null}
-
-      <SectionTitle title="Paper details" />
-      <Card>
-        <Input
-          label="Paper title"
-          placeholder={setLabel ? `e.g. "${exam?.name ?? 'Exam'} — ${setLabel}"` : 'e.g. "NEET 2026 — Set A"'}
-          value={title}
-          onChangeText={(t) => {
-            setTitle(t);
-            setPendingPaperId(null);
-          }}
-          editable={!locked}
-        />
-        <Text style={styles.fieldLabel}>Filter the bank by subject</Text>
-        <Chips options={subjectOptions} value={subject} onChange={setSubject} />
-      </Card>
-
-      {examId && format ? (
-        <>
-          <SectionTitle
-            title={enforced ? `${setLabel ?? 'Set'} requirements` : 'Exam format'}
-            right={
-              locked ? null : (
-                <Pressable onPress={autoFill} hitSlop={8}>
-                  <Text style={styles.autoFill}>Auto-fill</Text>
-                </Pressable>
-              )
-            }
-          />
-          <Card>
-            <Text style={styles.formatLine}>
-              {format.display_name} · {format.body}
+                );
+              })}
+            </View>
+            <Text style={styles.hint}>
+              {locked
+                ? `🔒 ${setLabel} is already ${labelFor(activeSet!.status)} and can no longer be edited.`
+                : allowReuse
+                  ? 'Each set is an independent paper. Question reuse across sets is allowed.'
+                  : 'Each set is an independent paper. A question used in one set cannot be used in another.'}
             </Text>
-            {enforced ? (
-              <>
-                <Text style={styles.formatTotals}>
-                  {report.totals.current}/{report.totals.required ?? '—'} questions ·{' '}
-                  {report.totals.marks_current}/{report.totals.marks_required ?? '—'} marks
-                </Text>
-                <View style={styles.progressWrap}>
-                  {report.sections.map((section) => (
-                    <SectionProgress
-                      key={section.name}
-                      name={section.name}
-                      current={section.current}
-                      target={
-                        section.required != null
-                          ? `${section.required}`
-                          : `${section.required_min}–${section.required_max}`
-                      }
-                      complete={section.complete}
-                      over={section.over}
-                      detail={section.requirements.map((r) => ({
-                        label: r.label.replace(/^\d+(–\d+)?\s*/, ''),
-                        current: r.current,
-                        target: r.min === r.max ? `${r.min}` : `${r.min}–${r.max}`,
-                        ok: r.status === 'ok',
-                      }))}
-                      warning={sectionWarning(section)}
-                    />
+          </>
+        )}
+      </View>
+
+      <CenteredHeading>Paper details</CenteredHeading>
+      <View style={styles.block}>
+        <View style={[styles.detailCard, { borderColor: p.rule, backgroundColor: `${p.pageShade}99` }]}>
+          <BookField
+            label="Paper title"
+            placeholder={
+              setLabel ? `${exam?.name ?? 'Exam'} — ${setLabel}` : 'e.g. NEET 2026 — Set A'
+            }
+            value={title}
+            onChangeText={(t) => {
+              setTitle(t);
+              setPendingPaperId(null);
+            }}
+            editable={!locked}
+          />
+          <Text style={[styles.detailLabel, { color: p.inkFaint }]}>Filter the bank by subject</Text>
+          <PillRow
+            options={subjectOptions.map((s) =>
+              s !== 'All subjects' && subjectCounts[s] ? `${s} · ${subjectCounts[s]}` : s
+            )}
+            value={
+              subject !== 'All subjects' && subjectCounts[subject]
+                ? `${subject} · ${subjectCounts[subject]}`
+                : subject
+            }
+            onChange={(v) => setSubject(v.split(' · ')[0])}
+          />
+        </View>
+      </View>
+
+      {/* Set requirements live entirely on the bookmark at the top of the
+          book — see RequirementsBookmark below. */}
+
+      <CenteredHeading>Question bank</CenteredHeading>
+      <View style={styles.bankLine}>
+        <Text style={styles.bankCount}>
+          {visiblePool.length}
+          {visiblePool.length !== examPool.length ? ` of ${examPool.length}` : ''}
+        </Text>
+        <Text style={styles.bankLabel}>available ·</Text>
+        <Text style={[styles.bankCount, { color: selectedIds.length > 0 ? p.success : p.ink }]}>
+          {selectedIds.length}
+        </Text>
+        <Text style={styles.bankLabel}>selected</Text>
+      </View>
+      {poolError ? <Text style={styles.error}>Could not load the bank: {poolError}</Text> : null}
+    </View>
+  );
+
+  const rightPage = (
+    <View style={stacked ? undefined : styles.flex}>
+      {/* Pagination left, actions right, one row — except on a stacked phone
+          leaf, where there is not room for both and they wrap instead. */}
+      <View style={[styles.topBar, stacked && styles.topBarStacked]}>
+        <View style={[styles.topBarPager, stacked && styles.topBarPagerStacked]}>
+          <BookPagination
+            page={pager.page}
+            pageCount={pager.pageCount}
+            from={pager.from}
+            to={pager.to}
+            total={pager.total}
+            pageSize={pager.pageSize}
+            onTurn={turnToPage}
+            onPageSize={pager.setPageSize}
+            sizes={PAGE_SIZES}
+          />
+        </View>
+        <View style={styles.topBarActions}>
+          <BookButton
+            title={`Save ${setLabel ?? 'Set'} as Draft`}
+            icon="save-outline"
+            onPress={() => void onSaveDraft()}
+            disabled={busy || locked}
+            compact
+          />
+          <BookButton
+            title="Preview Paper"
+            icon="eye-outline"
+            variant="gold"
+            onPress={() => void openPreview()}
+            loading={busy}
+            disabled={!canPreview}
+            compact
+          />
+        </View>
+      </View>
+      <Rule gap={10} />
+
+      <ScrollIfSpread stacked={stacked}>
+        <Animated.View style={pageTurn.style}>
+          {!examId ? (
+            <Empty
+              icon="reader-outline"
+              title="No examination chosen"
+              text="Pick an exam on the left page — only that exam's question bank can go into this paper."
+              palette={p}
+            />
+          ) : shownItems.length === 0 ? (
+            <Empty
+              icon="library-outline"
+              title="Nothing in the bank yet"
+              text="No questions for this exam and subject. Teachers' uploads appear here as they arrive — the bank is unlimited."
+              palette={p}
+            />
+          ) : (
+            shownItems.map((q) => (
+              <QuestionSlip
+                key={q.id}
+                q={q}
+                palette={p}
+                pageWidth={pageWidth}
+                selected={!!selected[q.id]}
+                owner={ownedBy(q)}
+                allowReuse={allowReuse}
+                onPress={() => toggle(q)}
+              />
+            ))
+          )}
+          <Animated.View
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, styles.turnShade, pageTurn.shadeStyle]}
+          />
+        </Animated.View>
+      </ScrollIfSpread>
+    </View>
+  );
+
+  /* ------------------------------- requirements ---------------------------- */
+
+  const requirementsInsert = (
+    <>
+      <View style={styles.insertHead}>
+        <Text style={[styles.insertTitle, { color: p.pamphletInk }]}>
+          {enforced ? `${setLabel ?? 'Set'} requirements` : 'Exam format'}
+        </Text>
+        {!locked && examId ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Auto-fill this set" onPress={autoFill} hitSlop={8}>
+            <Text style={[styles.autoFill, { color: p.pamphletEdge }]}>Auto-fill</Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={[styles.insertRule, { backgroundColor: `${p.pamphletEdge}66` }]} />
+
+      {!format ? (
+        <Text style={[styles.insertNote, { color: p.pamphletInkDim }]}>
+          Pick an examination to see what its paper sets require.
+        </Text>
+      ) : !enforced ? (
+        <Text style={[styles.insertNote, { color: p.warning }]}>
+          ⚠ This exam has no question-count blueprint, so a paper cannot be composed or sealed for
+          it. Ask the Admin to set the questions per section on the exam.
+        </Text>
+      ) : (
+        <ScrollView style={styles.insertScroll} showsVerticalScrollIndicator={false}>
+          <Text style={[styles.insertFormat, { color: p.pamphletInkDim }]}>
+            {format.display_name} · {format.body}
+          </Text>
+          {report.sections.map((section) => {
+            const warn = sectionWarning(section);
+            return (
+              <View key={section.name} style={styles.reqRow}>
+                <View style={styles.reqRowHead}>
+                  <Text style={[styles.reqName, { color: p.pamphletInk }]} numberOfLines={1}>
+                    {section.name}
+                  </Text>
+                  <Text
+                    style={[styles.reqCount, { color: section.complete ? p.success : p.warning }]}
+                  >
+                    {section.current} /{' '}
+                    {section.required != null
+                      ? section.required
+                      : `${section.required_min}–${section.required_max}`}{' '}
+                    {section.complete ? '✓' : '⚠'}
+                  </Text>
+                </View>
+                <View style={styles.reqChips}>
+                  {section.requirements.map((r) => (
+                    <Text
+                      key={r.label}
+                      style={[
+                        styles.reqChip,
+                        { color: r.status === 'ok' ? p.pamphletInkDim : p.warning },
+                      ]}
+                    >
+                      {r.label.replace(/^\d+(–\d+)?\s*/, '')} {r.current}/
+                      {r.min === r.max ? r.min : `${r.min}–${r.max}`}
+                    </Text>
                   ))}
                 </View>
-              </>
-            ) : (
-              <Text style={styles.poolError}>
-                ⚠ This exam has no question-count blueprint, so a paper cannot be composed or
-                sealed for it. Ask the Admin to set the questions per section on the exam.
-              </Text>
-            )}
-          </Card>
-        </>
-      ) : null}
+                {warn ? <Text style={[styles.reqWarn, { color: p.warning }]}>⚠ {warn}</Text> : null}
+              </View>
+            );
+          })}
 
-      <SectionTitle
-        title={`Question bank (${visiblePool.length}${
-          visiblePool.length !== examPool.length ? ` of ${examPool.length}` : ''
-        } available · ${selectedIds.length} selected)`}
-      />
-      {examId && examPool.length > 0 ? (
-        <Card>
-          <Text style={styles.bankBreakdownTitle}>In the bank for this exam</Text>
-          <View style={styles.bankBreakdown}>
-            {Object.entries(
-              examPool.reduce<Record<string, number>>((acc, q) => {
-                acc[q.subject] = (acc[q.subject] ?? 0) + 1;
-                return acc;
-              }, {})
-            )
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([name, n]) => (
-                <Pressable
-                  key={name}
-                  onPress={() => setSubject(subject === name ? 'All subjects' : name)}
-                  style={[styles.bankChip, subject === name && styles.bankChipActive]}
-                >
-                  <Text
-                    style={[styles.bankChipText, subject === name && { color: colors.primary }]}
-                  >
-                    {name} · {n}
-                  </Text>
-                </Pressable>
-              ))}
+          <View style={[styles.insertRule, { backgroundColor: `${p.pamphletEdge}66` }]} />
+          <View style={styles.reqTotals}>
+            <Text style={[styles.reqTotalLabel, { color: p.pamphletInkDim }]}>Total</Text>
+            <Text style={[styles.reqTotalValue, { color: report.ok ? p.success : p.pamphletInk }]}>
+              {report.totals.current} / {report.totals.required ?? '—'} questions ·{' '}
+              {report.totals.marks_current} / {report.totals.marks_required ?? '—'} marks
+            </Text>
           </View>
-        </Card>
-      ) : null}
-      {poolError ? (
-        <Card>
-          <Text style={styles.poolError}>Could not load the bank: {poolError}</Text>
-        </Card>
-      ) : null}
-      {!examId ? (
-        <Card>
-          <Text style={styles.emptyText}>
-            Pick an exam above — only that exam's question bank can go into this paper.
-          </Text>
-        </Card>
-      ) : visiblePool.length === 0 ? (
-        <Card>
-          <Text style={styles.emptyText}>
-            No questions in the bank for this exam/subject yet. Teachers' uploads appear here as
-            they arrive — the bank is unlimited, so build up as many as you like.
-          </Text>
-        </Card>
-      ) : (
-        <>
-        <Pagination
-          page={pager.page}
-          pageCount={pager.pageCount}
-          from={pager.from}
-          to={pager.to}
-          total={pager.total}
-          pageSize={pager.pageSize}
-          onPage={pager.setPage}
-          onPageSize={pager.setPageSize}
-        />
-        {pager.pageItems.map((q) => {
-          const isSelected = !!selected[q.id];
-          const owner = ownedBy(q);
-          // Nothing is disabled or dimmed: the whole bank is offered, and a
-          // selection that would break the format is refused on tap instead.
-          return (
-            <Pressable key={q.id} onPress={() => toggle(q)}>
-              <Card style={isSelected ? styles.cardSelected : undefined}>
-                <View style={styles.qRow}>
-                  <Ionicons
-                    name={isSelected ? 'checkbox' : 'square-outline'}
-                    size={22}
-                    color={isSelected ? colors.primary : colors.textDim}
-                  />
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.qTags}>
-                      <View style={styles.typePill}>
-                        <Text style={styles.typePillText}>{labelFor(q.question_type)}</Text>
-                      </View>
-                      {q.section_name ? (
-                        <View style={styles.sectionPill}>
-                          <Text style={styles.sectionPillText}>{q.section_name}</Text>
-                        </View>
-                      ) : null}
-                      <Text style={styles.qMeta}>
-                        {q.subject} · {q.difficulty} · {q.marks} mk
-                      </Text>
-                    </View>
-                    <Text style={styles.qBody} numberOfLines={3}>
-                      {q.body}
-                    </Text>
-                    {owner ? (
-                      <Text
-                        style={[
-                          styles.qStatus,
-                          { color: allowReuse ? colors.textDim : colors.warning },
-                        ]}
-                      >
-                        Already used in {owner}
-                        {allowReuse ? ' · reuse allowed' : ''}
-                      </Text>
-                    ) : null}
-                  </View>
-                </View>
-              </Card>
-            </Pressable>
-          );
-        })}
-        <Pagination
-          page={pager.page}
-          pageCount={pager.pageCount}
-          from={pager.from}
-          to={pager.to}
-          total={pager.total}
-          pageSize={pager.pageSize}
-          onPage={pager.setPage}
-        />
-        </>
+
+          {enforced && !report.ok && selectedIds.length > 0 && shortfall ? (
+            <View style={[styles.blocker, { borderColor: p.warning }]}>
+              <Text style={[styles.blockerTitle, { color: p.warning }]}>Cannot finalize paper</Text>
+              <Text style={[styles.blockerLine, { color: p.pamphletInkDim }]}>{shortfall}</Text>
+              {report.errors.length > 1 ? (
+                <Text style={[styles.blockerLine, { color: p.pamphletInkDim }]}>
+                  +{report.errors.length - 1} more to resolve.
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
+        </ScrollView>
       )}
+    </>
+  );
 
-      <View style={styles.actions}>
-        {enforced && !report.ok && selectedIds.length > 0 && shortfall ? (
-          <View style={styles.blockerBox}>
-            <Text style={styles.blockerTitle}>Cannot finalize paper</Text>
-            <Text style={styles.blockerLine}>{shortfall}</Text>
-            {report.errors.length > 1 ? (
-              <Text style={styles.blockerLine}>+{report.errors.length - 1} more to resolve.</Text>
-            ) : null}
-          </View>
-        ) : null}
-        <Button
-          title={`Save ${setLabel ?? 'Set'} as Draft`}
-          variant="ghost"
-          icon="save-outline"
-          onPress={() => void onSaveDraft()}
-          disabled={busy || locked}
-          style={{ marginBottom: spacing.sm }}
-        />
-        <Button
-          title="Preview Paper"
-          icon="eye-outline"
-          onPress={() => void openPreview()}
-          loading={busy}
-          disabled={!canPreview}
-        />
-        <Text style={styles.actionHint}>
-          {locked
-            ? 'This set is sealed. Pick another set to continue.'
-            : canPreview
-              ? 'Review the final paper, then confirm to encrypt this set.'
-              : 'Every section must hold exactly the questions the format requires before this set can be previewed.'}
-        </Text>
+  /* --------------------------------- render -------------------------------- */
+
+  const book = (
+    <View style={styles.bookWrap}>
+      <RequirementsBookmark
+        open={reqOpen}
+        onToggle={() => setReqOpen((v) => !v)}
+        label="Requirements"
+        status={reqStatus}
+        tone={reqTone}
+      >
+        {requirementsInsert}
+      </RequirementsBookmark>
+
+      <OpenBook
+        left={leftPage}
+        right={rightPage}
+        leftFolio={exam ? `${exam.name} · ${setLabel ?? 'No set'}` : 'Composition'}
+        rightFolio={`Question bank · page ${pager.page} of ${pager.pageCount}`}
+      />
+    </View>
+  );
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Paper Setter · Compose"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+        )}
+
+        {/* Composing must not scroll the page: on the spread the book is
+            centred and fixed, and only the question list scrolls. Stacked
+            phones keep an outer scroll, where there is no other option. */}
+        {stacked ? (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingHorizontal: outerPad, paddingBottom: 20 + insets.bottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {book}
+          </ScrollView>
+        ) : (
+          <View style={[styles.fixedStage, { paddingHorizontal: outerPad }]}>{book}</View>
+        )}
       </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
+      />
+
+      <ExamScale
+        visible={scaleOpen}
+        exams={exams.map((e) => ({ id: e.id, name: e.name, exam_date: e.exam_date }))}
+        selectedId={examId}
+        onSelect={onPickExam}
+        onClose={() => setScaleOpen(false)}
+      />
 
       <ScrollAlert content={decree} onClose={() => setDecree(null)} />
 
@@ -761,122 +876,275 @@ export default function ComposePaperScreen() {
         onSubmit={(values) => void handleSeal(values)}
         onClose={() => setSealModal(false)}
       />
-    </Screen>
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* ------------------------------ page pieces ------------------------------- */
+
+function ScrollIfSpread({ children, stacked }: { children: React.ReactNode; stacked: boolean }) {
+  if (stacked) return <View>{children}</View>;
+  return (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      {children}
+    </ScrollView>
+  );
+}
+
+function Empty({
+  icon,
+  title,
+  text,
+  palette: p,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  title: string;
+  text: string;
+  palette: ArchivePalette;
+}) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  return (
+    <View style={styles.empty}>
+      <Ionicons name={icon} size={26} color={p.inkFaint} />
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptyText}>{text}</Text>
+    </View>
+  );
+}
+
+/** One bank question, as a tickable slip on the page. */
+function QuestionSlip({
+  q,
+  palette: p,
+  pageWidth,
+  selected,
+  owner,
+  allowReuse,
+  onPress,
+}: {
+  q: Question;
+  palette: ArchivePalette;
+  pageWidth: number;
+  selected: boolean;
+  owner: string | null;
+  allowReuse: boolean;
+  onPress: () => void;
+}) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityLabel={q.body}
+      accessibilityState={{ checked: selected }}
+      onPress={onPress}
+      style={[
+        styles.slip,
+        { borderColor: selected ? p.gold : p.rule },
+        selected && { backgroundColor: p.goldSoft, borderWidth: 2 },
+      ]}
+    >
+      <Ionicons
+        name={selected ? 'checkbox' : 'square-outline'}
+        size={19}
+        color={selected ? p.gold : p.inkFaint}
+        style={styles.slipBox}
+      />
+      <View style={styles.flex}>
+        <View style={styles.slipTags}>
+          <View style={[styles.slipPill, { borderColor: p.rule }]}>
+            <Text style={styles.slipPillText}>{labelFor(q.question_type)}</Text>
+          </View>
+          {q.section_name ? (
+            <View style={[styles.slipPill, { borderColor: `${p.gold}77` }]}>
+              <Text style={[styles.slipPillText, { color: p.gold }]}>{q.section_name}</Text>
+            </View>
+          ) : null}
+          <Text style={styles.slipMeta}>
+            {q.subject} · {q.difficulty} · {q.marks} mk
+          </Text>
+        </View>
+        {/* No line clamp: the slip grows to whatever the question needs, so
+            nothing is hidden from the setter choosing it. */}
+        <Text style={[styles.slipBody, { fontSize: fluid(pageWidth, 12.5, 14.5) }]}>{q.body}</Text>
+        {owner ? (
+          <View style={styles.slipOwner}>
+            <Seal
+              label={`USED IN ${owner.toUpperCase()}`}
+              tone={allowReuse ? p.inkFaint : p.warning}
+            />
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    fieldLabel: {
-      color: colors.textDim,
-      fontSize: 13,
-      fontWeight: '600',
-      marginBottom: spacing.sm,
+    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    scrollContent: { paddingVertical: 16 },
+    // The spread stage never scrolls: the book is centred and fixed in it.
+    fixedStage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
+    // Positioning context for the bookmark tab and its insert.
+    bookWrap: { alignSelf: 'center', maxWidth: '100%' },
+
+    /* left page */
+    leftPage: { flex: 1 },
+    block: { marginTop: 8, marginBottom: 12 },
+    hint: {
+      fontFamily: serif,
+      fontSize: 11,
+      lineHeight: 16,
+      color: p.inkDim,
+      textAlign: 'center',
+      marginTop: 8,
+      fontStyle: 'italic',
     },
-    autoFill: { color: colors.primary, fontSize: 13, fontWeight: '700' },
-    formatLine: { color: colors.text, fontSize: 13, fontWeight: '700' },
-    formatTotals: { color: colors.accent, fontSize: 12, fontWeight: '700', marginTop: 4 },
-    progressWrap: { marginTop: spacing.md },
-    setHint: { color: colors.textDim, fontSize: 12, lineHeight: 17 },
-    lockedNote: { color: colors.warning, fontSize: 12, lineHeight: 17 },
-    setSummary: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.md },
-    setPill: {
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: radius.sm,
-      paddingHorizontal: 10,
-      paddingVertical: 5,
-      backgroundColor: colors.surfaceAlt,
-    },
-    setPillActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-    setPillText: { fontSize: 12, fontWeight: '800' },
-    emptyText: {
-      color: colors.textDim,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    poolError: { color: colors.danger, fontSize: 13, fontWeight: '700', lineHeight: 19 },
-    bankBreakdownTitle: {
-      color: colors.textDim,
-      fontSize: 12,
-      fontWeight: '700',
-      marginBottom: spacing.sm,
-    },
-    bankBreakdown: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-    bankChip: {
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 5,
-      backgroundColor: colors.surfaceAlt,
-    },
-    bankChipActive: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-    bankChipText: { color: colors.textDim, fontSize: 12, fontWeight: '700' },
-    cardSelected: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primarySoft,
-      borderRadius: radius.lg,
-    },
-    qRow: {
-      flexDirection: 'row',
-      gap: spacing.md,
-      alignItems: 'flex-start',
-    },
-    qTags: {
+    setTabs: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
+    setTab: {
       flexDirection: 'row',
       alignItems: 'center',
-      flexWrap: 'wrap',
-      gap: spacing.sm,
-      marginBottom: 4,
-    },
-    typePill: {
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-    },
-    typePillText: {
-      color: colors.textDim,
-      fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 0.4,
-    },
-    sectionPill: {
-      backgroundColor: colors.primarySoft,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-    },
-    sectionPillText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
-    qBody: {
-      color: colors.text,
-      fontSize: 14,
-      lineHeight: 20,
-    },
-    qMeta: {
-      color: colors.textDim,
-      fontSize: 12,
-    },
-    qStatus: { color: colors.textFaint, fontSize: 11, marginTop: 4, fontWeight: '600' },
-    actions: {
-      marginTop: spacing.lg,
-    },
-    blockerBox: {
+      gap: 6,
       borderWidth: 1,
-      borderColor: colors.warning,
-      borderRadius: radius.sm,
-      padding: spacing.md,
-      marginBottom: spacing.md,
-      backgroundColor: colors.surface,
+      borderRadius: 3,
+      paddingVertical: 7,
+      paddingHorizontal: 14,
     },
-    blockerTitle: { color: colors.warning, fontSize: 13, fontWeight: '800', marginBottom: 4 },
-    blockerLine: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
-    actionHint: {
-      color: colors.textDim,
-      fontSize: 12,
-      lineHeight: 17,
+    setTabText: { fontFamily: serif, fontSize: 13, fontWeight: '700', letterSpacing: 0.8 },
+    setTabMark: { fontFamily: serif, fontSize: 12, fontWeight: '700' },
+    detailCard: { borderWidth: 1, borderRadius: 3, paddingVertical: 11, paddingHorizontal: 12, gap: 9 },
+    detailLabel: {
+      fontFamily: serif,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+    },
+    bankLine: {
+      flexDirection: 'row',
+      alignItems: 'baseline',
+      justifyContent: 'center',
+      gap: 5,
+      marginTop: 10,
+      flexWrap: 'wrap',
+    },
+    bankCount: {
+      fontFamily: serif,
+      fontSize: 17,
+      fontWeight: '700',
+      color: p.ink,
+      fontVariant: ['tabular-nums'],
+    },
+    bankLabel: { fontFamily: serif, fontSize: 11.5, color: p.inkDim },
+    error: {
+      fontFamily: serif,
+      fontSize: 11.5,
+      color: p.danger,
       textAlign: 'center',
-      marginTop: spacing.sm,
+      marginTop: 8,
+      lineHeight: 17,
     },
+
+    /* right page */
+    // Deliberately nowrap: the spec puts the actions on the pagination's own
+    // row. Both cells shrink instead of the actions dropping to a second line.
+    // Deliberately nowrap: the spec puts the actions on the pagination's own
+    // row. The pager must not flex-grow, or it eats the space the buttons need
+    // and drops them onto a second line.
+    topBar: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, flexWrap: 'nowrap' },
+    topBarStacked: { flexWrap: 'wrap' },
+    topBarPager: { flexShrink: 1, flexGrow: 0, minWidth: 148 },
+    topBarPagerStacked: { flexBasis: '100%', minWidth: 0 },
+    topBarActions: {
+      flexDirection: 'row',
+      gap: 6,
+      flex: 1,
+      flexWrap: 'nowrap',
+      justifyContent: 'flex-end',
+    },
+
+    /* question slips */
+    slip: {
+      flexDirection: 'row',
+      gap: 10,
+      borderWidth: 1,
+      borderRadius: 3,
+      backgroundColor: p.pageShade,
+      paddingVertical: 11,
+      paddingHorizontal: 12,
+      marginBottom: 10,
+    },
+    slipBox: { marginTop: 1 },
+    slipTags: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginBottom: 5 },
+    slipPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
+    slipPillText: {
+      fontFamily: serif,
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.8,
+      color: p.inkDim,
+    },
+    slipMeta: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint },
+    slipBody: { fontFamily: serif, color: p.ink, lineHeight: 19 },
+    slipOwner: { marginTop: 7, alignSelf: 'flex-start' },
+
+    /* requirements insert */
+    insertHead: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+    },
+    insertTitle: {
+      fontFamily: serif,
+      fontSize: 13,
+      fontWeight: '700',
+      letterSpacing: 2,
+      textTransform: 'uppercase',
+    },
+    autoFill: {
+      fontFamily: serif,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+    },
+    insertRule: { height: 1, marginVertical: 10 },
+    insertNote: { fontFamily: serif, fontSize: 12, lineHeight: 18 },
+    insertScroll: { maxHeight: 300 },
+    insertFormat: { fontFamily: serif, fontSize: 11, marginBottom: 10, fontStyle: 'italic' },
+    reqRow: { marginBottom: 11 },
+    reqRowHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between', gap: 8 },
+    reqName: { fontFamily: serif, fontSize: 13.5, fontWeight: '700', flexShrink: 1 },
+    reqCount: { fontFamily: serif, fontSize: 13, fontWeight: '700', fontVariant: ['tabular-nums'] },
+    reqChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 3 },
+    reqChip: { fontFamily: serif, fontSize: 10.5 },
+    reqWarn: { fontFamily: serif, fontSize: 10.5, marginTop: 4, lineHeight: 15 },
+    reqTotals: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
+    reqTotalLabel: {
+      fontFamily: serif,
+      fontSize: 10.5,
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
+    },
+    reqTotalValue: { fontFamily: serif, fontSize: 12.5, fontWeight: '700' },
+    blocker: { borderWidth: 1, borderRadius: 3, padding: 10, marginTop: 12 },
+    blockerTitle: { fontFamily: serif, fontSize: 12, fontWeight: '700', marginBottom: 3 },
+    blockerLine: { fontFamily: serif, fontSize: 11, lineHeight: 16 },
+
+    /* shared */
+    empty: { alignItems: 'center', gap: 8, paddingVertical: 34, paddingHorizontal: 10 },
+    emptyTitle: { fontFamily: serif, fontSize: 15, fontWeight: '700', color: p.ink },
+    emptyText: {
+      fontFamily: serif,
+      fontSize: 12.5,
+      lineHeight: 18,
+      color: p.inkDim,
+      textAlign: 'center',
+    },
+    turnShade: { backgroundColor: '#000' },
   });

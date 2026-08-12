@@ -1,25 +1,45 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { Badge, Button, Card, CeremonyModal, EmptyState, Screen } from '../../components/UI';
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  OpenBook,
+  PageTitle,
+  Rule,
+  fluid,
+  useArchiveLayout,
+  useArchivePalette,
+} from '../../components/ArchiveBook';
+import { KeyBlackboard, Seal } from '../../components/ArchiveControls';
 import { usePrintPreview } from '../../context/PrintPreviewContext';
-import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { cosignPaper, printCopies } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
-import { spacing, ThemeColors } from '../../lib/theme';
+import { serif } from '../../lib/theme';
 import { Paper } from '../../lib/types';
+import { useAdminIndex } from './useAdminIndex';
+
+const SELF = 'Papers';
 
 export default function AdminPapersScreen() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const p = useArchivePalette();
+  const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => makeStyles(p), [p]);
   const navigation = useNavigation<{ navigate: (screen: string) => void }>();
   const { setLastPrint } = usePrintPreview();
 
   const [papers, setPapers] = useState<Paper[]>([]);
   const [copyCounts, setCopyCounts] = useState<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
+  const [indexOpen, setIndexOpen] = useState(false);
 
   const [cosignTarget, setCosignTarget] = useState<Paper | null>(null);
   const [printTarget, setPrintTarget] = useState<Paper | null>(null);
@@ -33,7 +53,6 @@ export default function AdminPapersScreen() {
         .order('created_at', { ascending: false }),
       supabase.from('paper_copies').select('paper_id'),
     ]);
-    // Surface a real error instead of silently showing an empty list.
     if (pErr) {
       console.error('papers query failed:', pErr);
       showAlert('Could not load papers', pErr.message);
@@ -57,11 +76,7 @@ export default function AdminPapersScreen() {
   useEffect(() => {
     const channel = supabase
       .channel('papers-admin')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'papers' },
-        () => void load()
-      )
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'papers' }, () => void load())
       .subscribe();
     return () => {
       void supabase.removeChannel(channel);
@@ -101,28 +116,21 @@ export default function AdminPapersScreen() {
     if (!printTarget) return;
     const setterPass = values.setterPassphrase ?? '';
     const adminPass = values.adminPassphrase ?? '';
-    const copies = parseInt(values.copies ?? '', 10);
-    const location = (values.location ?? '').trim() || 'Central Government Press';
 
     if (!setterPass || !adminPass) {
       showAlert('Two-person rule', 'Both the Setter and Admin passphrases are required.');
       return;
     }
-    if (!copies || copies < 1 || copies > 500) {
-      showAlert('Invalid copies', 'Enter a copy count between 1 and 500.');
-      return;
-    }
 
     setWorking(true);
     try {
-      const result = await printCopies(printTarget.id, setterPass, adminPass, copies, location);
+      const result = await printCopies(printTarget.id, setterPass, adminPass, 10, 'Central Government Press');
       setPrintTarget(null);
-      // Hand the decrypted paper + per-copy QR payloads to the Print Preview tab.
       setLastPrint(result);
       void load();
       showAlert(
         'Print ceremony complete 🖨️',
-        `${result.copies} copies minted at "${location}". Each carries a signed QR + invisible fingerprint. Opening the print preview…`,
+        `${result.copies} copies minted. Each carries a signed QR + invisible fingerprint. Opening the print preview…`,
         [{ text: 'View & Print', onPress: () => navigation.navigate('PrintPreview') }]
       );
     } catch (e) {
@@ -132,34 +140,45 @@ export default function AdminPapersScreen() {
     }
   };
 
-  return (
-    <Screen>
-      <FlatList
-        data={papers}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void onRefresh()}
-            tintColor={colors.text}
-          />
-        }
-        ListEmptyComponent={
-          <EmptyState
-            icon="documents-outline"
-            title="No papers in the system"
-            subtitle="Papers sealed by setters arrive here for co-signature in real time."
-          />
-        }
-        renderItem={({ item }) => (
-          <Card>
-            <View style={styles.header}>
-              <Text style={styles.title} numberOfLines={1}>
+  const { items, onSelect } = useAdminIndex({
+    active: SELF,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
+
+  const pending = papers.filter((p2) => p2.status !== 'printed' && p2.status !== 'distributed' && p2.status !== 'completed');
+  const printed = papers.filter((p2) => p2.status === 'printed' || p2.status === 'distributed' || p2.status === 'completed');
+
+  const statusLabel = (status: Paper['status']) => {
+    if (status === 'draft') return 'Draft';
+    if (status === 'sealed') return 'Awaiting Co-sign';
+    if (status === 'sealed_dual') return 'Awaiting Printing';
+    return status.replace(/_/g, ' ');
+  };
+
+  /* -------------------------------- pages -------------------------------- */
+
+  const leftPage = (
+    <LeafScroll stacked={stacked}>
+      <PageTitle center size={[19, 27]}>
+        Papers in Progress
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      {pending.length === 0 ? (
+        <Text style={styles.emptyText}>
+          No papers awaiting action. Papers sealed by setters arrive here for co-signature in
+          real time.
+        </Text>
+      ) : (
+        pending.map((item) => (
+          <View key={item.id} style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={[styles.cardTitle, { fontSize: fluid(pageWidth, 12.5, 14) }]} numberOfLines={1}>
                 {item.title}
               </Text>
-              <Badge status={item.status} />
+              <Seal label={statusLabel(item.status).toUpperCase()} tone={item.status === 'sealed' ? p.warning : p.info} />
             </View>
-            <Text style={styles.meta}>
+            <Text style={styles.cardMeta}>
               {item.exam?.name ? `${item.exam.name} · ` : ''}
               {item.subject} · {item.question_count} questions · by{' '}
               {item.setter?.full_name ?? 'Unknown'} · {timeAgo(item.created_at)}
@@ -169,99 +188,215 @@ export default function AdminPapersScreen() {
             ) : null}
 
             {item.status === 'sealed' && (
-              <Button
-                title="Co-sign (Key Share 2/2)"
+              <ActionButton
+                label="Co-sign (Key Share 2/2)"
                 icon="shield-checkmark-outline"
+                palette={p}
                 onPress={() => setCosignTarget(item)}
-                style={{ marginTop: spacing.md }}
               />
             )}
             {item.status === 'sealed_dual' && (
-              <Button
-                title="Print Ceremony (two-person rule)"
-                variant="success"
+              <ActionButton
+                label="Print Ceremony"
                 icon="print-outline"
+                palette={p}
+                tone={p.success}
                 onPress={() => setPrintTarget(item)}
-                style={{ marginTop: spacing.md }}
               />
             )}
             {item.status === 'draft' && (
               <Text style={styles.hint}>Setter has not sealed this draft yet.</Text>
             )}
-          </Card>
-        )}
+          </View>
+        ))
+      )}
+    </LeafScroll>
+  );
+
+  const rightPage = (
+    <LeafScroll stacked={stacked}>
+      <PageTitle center size={[19, 27]}>
+        Printed Papers
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      {printed.length === 0 ? (
+        <Text style={styles.emptyText}>
+          No papers have completed the printing ceremony yet.
+        </Text>
+      ) : (
+        printed.map((item) => (
+          <View key={item.id} style={styles.card}>
+            <View style={styles.cardHead}>
+              <Text style={[styles.cardTitle, { fontSize: fluid(pageWidth, 12.5, 14) }]} numberOfLines={1}>
+                {item.title}
+              </Text>
+              <Seal label={statusLabel(item.status).toUpperCase()} tone={p.success} />
+            </View>
+            <Text style={styles.cardMeta}>
+              {item.exam?.name ? `${item.exam.name} · ` : ''}
+              {item.subject} · {item.question_count} questions · by{' '}
+              {item.setter?.full_name ?? 'Unknown'} · {timeAgo(item.created_at)}
+            </Text>
+            {copyCounts[item.id] ? (
+              <Text style={styles.copies}>{copyCounts[item.id]} copies in custody</Text>
+            ) : null}
+          </View>
+        ))
+      )}
+    </LeafScroll>
+  );
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Admin · Papers"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
       />
 
-      <CeremonyModal
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+        )}
+
+        {stacked ? (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingHorizontal: outerPad, paddingBottom: 20 + insets.bottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={p.gold} />
+            }
+          >
+            <OpenBook left={leftPage} right={rightPage} leftFolio="In progress" rightFolio="Printed" />
+          </ScrollView>
+        ) : (
+          <View style={[styles.stage, { paddingHorizontal: outerPad }]}>
+            <OpenBook left={leftPage} right={rightPage} leftFolio="In progress" rightFolio="Printed" />
+          </View>
+        )}
+      </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
+      />
+
+      <KeyBlackboard
         visible={!!cosignTarget}
-        title="Co-Sign Ceremony — Key Share 2/2"
-        subtitle={`Co-signing "${cosignTarget?.title ?? ''}". Your passphrase wraps the second half of the key and destroys the escrow copy. After this, decryption requires both you and the setter.`}
-        fields={[
-          {
-            key: 'passphrase',
-            label: 'Admin passphrase (min 8 chars)',
-            placeholder: 'Secret passphrase',
-            secure: true,
-          },
-        ]}
+        title="Co-Sign Ceremony"
+        subtitle={`Co-signing "${cosignTarget?.title ?? ''}". Your key wraps the second half of the encryption. After this, decryption requires both you and the setter.`}
+        fields={[{ key: 'passphrase', label: 'Admin paraphrase key (min 8 chars)', placeholder: 'Secret passphrase' }]}
         submitLabel="Co-Sign Paper"
         busy={working}
         onSubmit={(values) => void handleCosign(values)}
         onClose={() => setCosignTarget(null)}
       />
 
-      <CeremonyModal
+      <KeyBlackboard
         visible={!!printTarget}
-        title="Print Ceremony — Two-Person Rule"
-        subtitle={`Decrypting "${printTarget?.title ?? ''}" requires BOTH passphrases, entered together. Each printed copy receives a signed QR code and an invisible AI fingerprint.`}
+        title="Printing Ceremony"
+        subtitle={`Decrypting "${printTarget?.title ?? ''}" requires BOTH keys, entered together. Each printed copy receives a signed QR code and an invisible AI fingerprint.`}
         fields={[
-          { key: 'setterPassphrase', label: 'Paper Setter passphrase', secure: true },
-          { key: 'adminPassphrase', label: 'Admin passphrase', secure: true },
-          { key: 'copies', label: 'Number of copies (1–500)', numeric: true, defaultValue: '10' },
-          {
-            key: 'location',
-            label: 'Printing press location',
-            defaultValue: 'Central Government Press, Delhi',
-          },
+          { key: 'setterPassphrase', label: "Paper Setter's paraphrase key" },
+          { key: 'adminPassphrase', label: "Admin's paraphrase key" },
         ]}
         submitLabel="Decrypt & Print Copies"
         busy={working}
         onSubmit={(values) => void handlePrint(values)}
         onClose={() => setPrintTarget(null)}
       />
-    </Screen>
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* ------------------------------ page pieces ------------------------------- */
+
+function LeafScroll({ children, stacked }: { children: React.ReactNode; stacked: boolean }) {
+  if (stacked) return <View>{children}</View>;
+  return (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      {children}
+    </ScrollView>
+  );
+}
+
+function ActionButton({
+  label,
+  icon,
+  onPress,
+  palette: p,
+  tone,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  palette: ArchivePalette;
+  tone?: string;
+}) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const accent = tone ?? p.gold;
+  return (
+    <View style={[styles.actionBtn, { borderColor: accent }]}>
+      <Ionicons name={icon} size={13} color={accent} />
+      <Text style={[styles.actionBtnText, { color: accent }]} onPress={onPress}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    header: {
+    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    scrollContent: { paddingVertical: 16 },
+    stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
+
+    emptyText: { fontFamily: serif, fontSize: 12.5, color: p.inkDim, lineHeight: 18, textAlign: 'center' },
+
+    card: {
+      borderWidth: 1,
+      borderColor: p.rule,
+      backgroundColor: p.pageShade,
+      borderRadius: 3,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      marginBottom: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 5,
+      elevation: 1,
+    },
+    cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    cardTitle: { flex: 1, fontFamily: serif, fontWeight: '700', color: p.ink },
+    cardMeta: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, marginTop: 5, lineHeight: 15 },
+    copies: { fontFamily: serif, fontSize: 10.5, color: p.gold, marginTop: 3, fontWeight: '700' },
+    hint: { fontFamily: serif, fontSize: 11, color: p.inkFaint, fontStyle: 'italic', marginTop: 8 },
+
+    actionBtn: {
       flexDirection: 'row',
-      justifyContent: 'space-between',
       alignItems: 'center',
-      gap: spacing.sm,
+      gap: 6,
+      alignSelf: 'flex-start',
+      borderWidth: 1,
+      borderRadius: 3,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      marginTop: 9,
     },
-    title: {
-      color: colors.text,
-      fontSize: 15,
-      fontWeight: '700',
-      flex: 1,
-    },
-    meta: {
-      color: colors.textDim,
-      fontSize: 12,
-      marginTop: spacing.sm,
-    },
-    copies: {
-      color: colors.primary,
-      fontSize: 12,
-      fontWeight: '600',
-      marginTop: 4,
-    },
-    hint: {
-      color: colors.textDim,
-      fontSize: 12,
-      fontStyle: 'italic',
-      marginTop: spacing.sm,
-    },
+    actionBtnText: { fontFamily: serif, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
   });

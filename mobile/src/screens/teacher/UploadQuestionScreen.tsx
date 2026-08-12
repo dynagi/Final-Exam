@@ -1,30 +1,64 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { BlurView } from 'expo-blur';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Button,
-  Card,
-  Chips,
-  EmptyState,
-  ExamPicker,
-  Input,
-  Screen,
-  SectionProgress,
-  SectionTitle,
-  Select,
-  SelectOption,
-} from '../../components/UI';
+  Animated,
+  Easing,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  OpenBook,
+  PageTitle,
+  Rule,
+  fluid,
+  useArchiveLayout,
+  useArchivePalette,
+  usePageTurn,
+  useReducedMotion,
+} from '../../components/ArchiveBook';
+import { CenteredHeading, PillRow, PlaqueButton, Seal } from '../../components/ArchiveControls';
+import {
+  ArchiveWorking,
+  BookArrow,
+  KingsScroll,
+  PageIndicator,
+  PopupRow,
+  QuillButton,
+  UploadDropZone,
+  VintagePopup,
+} from '../../components/ArchiveUpload';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { extractQuestions, submitQuestions } from '../../lib/api';
 import { fetchAll } from '../../lib/db';
-import { CompositionInput, FormatSection, sectionsForTeacher, TYPE_SHORT } from '../../lib/examFormats';
+import {
+  CompositionInput,
+  FormatSection,
+  sectionsForTeacher,
+  TYPE_SHORT,
+} from '../../lib/examFormats';
 import { pickPdf } from '../../lib/pdf';
 import { supabase } from '../../lib/supabase';
-import { radius, spacing, ThemeColors } from '../../lib/theme';
+import { serif } from '../../lib/theme';
 import { ExtractedQuestion, NewQuestionInput, QuestionType } from '../../lib/types';
 import { useScheduledExams } from '../../lib/useExams';
+import { useTeacherIndex } from './useTeacherIndex';
+
+const SELF = 'Upload';
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
@@ -36,6 +70,8 @@ const FREE_TYPES: { key: QuestionType; label: string }[] = [
 const SEED_SUBJECTS = ['Physics', 'Chemistry', 'Biology', 'Mathematics', 'General Studies'];
 /** Above this, an import is split into batches and worth showing progress for. */
 const QUESTION_BATCH_HINT = 200;
+/** Extracted questions shown per leaf in the review book. */
+const PER_LEAF = 3;
 
 /**
  * One writable slot in the format: a (section, type, marks) triple.
@@ -56,13 +92,24 @@ interface Slot {
   perPaper: number;
 }
 
+/** Which archive the teacher is working in. */
+type Stage = 'manual' | 'pdf';
+
 export default function UploadQuestionScreen() {
   const { profile } = useAuth();
   const { exams } = useScheduledExams();
   const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const p = useArchivePalette();
+  const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => makeStyles(p), [p]);
 
-  const [mode, setMode] = useState<'manual' | 'pdf'>('manual');
+  const [stage, setStage] = useState<Stage>('manual');
+  // The scroll is the way in: the page opens by asking how to add questions.
+  const [scrollOpen, setScrollOpen] = useState(true);
+  const [indexOpen, setIndexOpen] = useState(false);
+  const [subjectPopup, setSubjectPopup] = useState(false);
+
   const [examId, setExamId] = useState<string | null>(null);
   const [subject, setSubject] = useState('');
   const [subjectSuggestions, setSubjectSuggestions] = useState<string[]>(SEED_SUBJECTS);
@@ -94,6 +141,8 @@ export default function UploadQuestionScreen() {
   const [importing, setImporting] = useState(false);
   /** "400/1000" while a large import streams through in batches. */
   const [importProgress, setImportProgress] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [reviewPage, setReviewPage] = useState(1);
 
   const exam = exams.find((e) => e.id === examId) ?? null;
   const format = exam?.format_blueprint ?? null;
@@ -199,19 +248,10 @@ export default function UploadQuestionScreen() {
     setMarks(String(slot.marks));
   }, [slot]);
 
-  const slotOptions: SelectOption[] = slots.map((s) => ({
-    value: s.key,
-    label: s.label,
-    hint: `${s.banked} in the bank · each paper set uses ${s.perPaper}`,
-    group: s.sectionName,
-    tag: s.banked < s.perPaper * setCount ? 'NEEDS MORE' : undefined,
-  }));
-
-  /** Without an enforced format the subject stays free text, as before. */
-  const freeSubjectOptions: SelectOption[] = useMemo(() => {
+  /** Without an enforced format the subject stays a free choice, as before. */
+  const freeSubjects = useMemo(() => {
     const base = format ? format.subjects : subjectSuggestions;
-    const scoped = assigned ? base.filter((s) => assigned.includes(s)) : base;
-    return scoped.map((s) => ({ value: s, label: s }));
+    return assigned ? base.filter((s) => assigned.includes(s)) : base;
   }, [format, subjectSuggestions, assigned]);
 
   const setOption = (index: number, text: string) =>
@@ -313,6 +353,10 @@ export default function UploadQuestionScreen() {
       setPicked(all);
       if (res.questions.length === 0) {
         showAlert('No questions found', 'The parser could not detect questions in that PDF.');
+      } else {
+        // The archive opens a second volume for reviewing what was found.
+        setReviewPage(1);
+        setReviewOpen(true);
       }
     } catch (e) {
       showAlert('Extraction failed', e instanceof Error ? e.message : 'Unknown error');
@@ -381,6 +425,7 @@ export default function UploadQuestionScreen() {
       setExtracted([]);
       setPicked({});
       setPdfName(null);
+      setReviewOpen(false);
       await loadBank();
       void loadSubjects();
     } catch (e) {
@@ -391,440 +436,946 @@ export default function UploadQuestionScreen() {
     }
   };
 
-  // Questions can only target an exam the Admin has scheduled.
-  if (exams.length === 0) {
-    return (
-      <Screen>
-        <EmptyState
-          icon="calendar-clear-outline"
-          title="No exams scheduled yet"
-          subtitle="Questions can only be submitted for an exam scheduled by the Admin. This screen unlocks automatically the moment one is scheduled."
-        />
-      </Screen>
-    );
-  }
+  const { items, onSelect } = useTeacherIndex({
+    active: 'Upload',
+    onBeforeSelect: () => setIndexOpen(false),
+  });
+
+  // Choosing "Upload" while already here re-opens the scroll, as specified.
+  const onIndexSelect = (item: (typeof items)[number]) => {
+    if (item.route === 'Upload') {
+      setIndexOpen(false);
+      setScrollOpen(true);
+      return;
+    }
+    onSelect(item);
+  };
 
   const activeType = enforced && slot ? slot.type : qType;
-  const visibleSlots = slots;
+  const marksLocked = enforced;
 
-  return (
-    <Screen scroll>
-      <View style={styles.modeRow}>
-        <Chips
-          options={['Type one', 'Import PDF']}
-          value={mode === 'manual' ? 'Type one' : 'Import PDF'}
-          onChange={(v) => setMode(v === 'Type one' ? 'manual' : 'pdf')}
-        />
-      </View>
+  /* --------------------------------- pages -------------------------------- */
 
-      <SectionTitle title="Exam" />
-      <ExamPicker exams={exams} value={examId} onChange={setExamId} />
-      {!examId ? <Text style={styles.hint}>Select the exam these questions are for.</Text> : null}
+  const examChosen = !!examId;
 
-      {examId && format ? (
-        <>
-          <SectionTitle title={format.display_name} />
-          <Card>
-            <Text style={styles.formatMeta}>
-              {format.body} · {format.mode}
-              {format.duration_minutes ? ` · ${format.duration_minutes} min` : ''}
-            </Text>
-            {enforced ? (
-              <>
-                <Text style={styles.formatMeta}>
-                  Each paper set: {format.totals.questions ?? '—'} questions ·{' '}
-                  {format.totals.marks ?? '—'} marks · {setCount} set{setCount === 1 ? '' : 's'}
+  /** Shared left leaf: exam, then everything the exam unlocks. */
+  const leftPage = (
+    <LeafScroll stacked={stacked}>
+      <PageTitle eyebrow={stage === 'pdf' ? 'Import from PDF' : 'Write a question'} size={[20, 28]}>
+        {stage === 'pdf' ? 'PDF Import' : 'Manual Entry'}
+      </PageTitle>
+      <Rule ornament gap={13} />
+
+      <CenteredHeading>Exam</CenteredHeading>
+
+      {!examChosen ? (
+        // STATE A — nothing is chosen yet, so only the exams are offered.
+        <View style={styles.examList}>
+          {exams.map((e) => (
+            <Pressable
+              key={e.id}
+              accessibilityRole="button"
+              accessibilityLabel={`${e.name}, ${e.exam_date}`}
+              onPress={() => setExamId(e.id)}
+              style={({ pressed }) => [
+                styles.examRow,
+                { borderColor: p.rule },
+                pressed && { backgroundColor: p.goldSoft },
+              ]}
+            >
+              <Ionicons name="calendar-outline" size={15} color={p.gold} />
+              <View style={styles.flex}>
+                <Text style={styles.examName} numberOfLines={2}>
+                  {e.name}
                 </Text>
-                {assigned ? (
-                  <Text style={styles.assignedNote}>
-                    You are assigned to: {assigned.join(', ')}.
-                  </Text>
-                ) : null}
-                <Text style={styles.bankNote}>
-                  The bank is unlimited — write as many as you like. These counts show how deep it
-                  is against what {setCount === 1 ? 'the paper needs' : `${setCount} sets need`}.
-                </Text>
-                <View style={styles.progressWrap}>
-                  {visibleSlots.map((s) => {
-                    const target = s.perPaper * setCount;
-                    return (
-                      <SectionProgress
-                        key={s.key}
-                        name={s.label}
-                        current={s.banked}
-                        target={`${target}`}
-                        complete={s.banked >= target}
-                        detail={[
-                          { label: 'per set', current: s.perPaper, target: `${s.perPaper}`, ok: true },
-                        ]}
-                        warning={
-                          s.banked < target
-                            ? `Bank ${target - s.banked} more so every set can draw its own ${s.perPaper}.`
-                            : null
-                        }
-                      />
-                    );
-                  })}
-                </View>
-              </>
-            ) : (
-              <Text style={styles.freeFormNote}>
-                This format's pattern is set by the yearly brochure, so no per-section quota is
-                enforced. Subjects: {format.subjects.join(', ')}.
+                <Text style={styles.examDate}>{e.exam_date}</Text>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      ) : (
+        // STATE B — the leaf becomes the exam's requirement page.
+        <View style={styles.block}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`${exam?.name}. Choose a different exam`}
+            onPress={() => setExamId(null)}
+            style={[styles.chosenExam, { borderColor: p.gold, backgroundColor: p.goldSoft }]}
+          >
+            <View style={styles.flex}>
+              <Text style={styles.chosenName} numberOfLines={2}>
+                {format?.display_name ?? exam?.name}
               </Text>
-            )}
-          </Card>
-        </>
-      ) : null}
+              {format ? (
+                <Text style={styles.chosenMeta}>
+                  {format.body} · {format.mode}
+                  {format.duration_minutes ? ` · ${format.duration_minutes} min` : ''}
+                </Text>
+              ) : null}
+            </View>
+            <Ionicons name="swap-horizontal" size={15} color={p.gold} />
+          </Pressable>
 
-      <SectionTitle title="Subject" />
-      <Card>
-        {enforced ? (
-          <>
-            <Select
-              label="Section quota"
-              placeholder={slots.length ? 'Choose a section, type and marks…' : 'No quota available'}
-              value={slotKey}
-              options={slotOptions}
-              onChange={setSlotKey}
-              emptyText="Every quota you are assigned to is already full."
+          {format && enforced ? (
+            <>
+              <Text style={styles.reqLine}>
+                Each paper set: {format.totals.questions ?? '—'} questions ·{' '}
+                {format.totals.marks ?? '—'} marks · {setCount} set{setCount === 1 ? '' : 's'}
+              </Text>
+              {assigned ? (
+                <Text style={styles.assigned}>You are assigned to: {assigned.join(', ')}.</Text>
+              ) : null}
+              <Text style={styles.bankNote}>
+                The bank is unlimited — write as many as you like. These counts show how deep it is
+                against what {setCount === 1 ? 'the paper needs' : `${setCount} sets need`}.
+              </Text>
+
+              <View style={styles.quotaList}>
+                {slots.map((s) => {
+                  const target = s.perPaper * setCount;
+                  const ok = s.banked >= target;
+                  return (
+                    <View key={s.key} style={[styles.quota, { borderColor: p.rule }]}>
+                      <Text style={styles.quotaLabel} numberOfLines={2}>
+                        {s.label}
+                      </Text>
+                      <View style={styles.quotaFigures}>
+                        <Text style={[styles.quotaCount, { color: ok ? p.success : p.warning }]}>
+                          {s.banked}/{target} {ok ? '✓' : '⚠'}
+                        </Text>
+                        <Text style={styles.quotaPer}>
+                          per set {s.perPaper}/{s.perPaper}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            </>
+          ) : format ? (
+            <Text style={styles.bankNote}>
+              This format&apos;s pattern is set by the yearly brochure, so no per-section quota is
+              enforced. Subjects: {format.subjects.join(', ')}.
+            </Text>
+          ) : null}
+        </View>
+      )}
+
+      {examChosen ? (
+        <>
+          <CenteredHeading>Subject</CenteredHeading>
+          <View style={styles.block}>
+            <PlaqueButton
+              value={
+                enforced
+                  ? (slot?.label ?? 'Section quota')
+                  : subject || 'Choose a subject'
+              }
+              icon="pricetag-outline"
+              accessibilityLabel="Choose subject"
+              onPress={() => setSubjectPopup(true)}
             />
-            {slot ? (
+            {enforced && slot ? (
               <Text style={styles.slotNote}>
-                Subject <Text style={styles.slotStrong}>{slot.subject}</Text> · type{' '}
-                <Text style={styles.slotStrong}>{TYPE_SHORT[slot.type]}</Text> · marks{' '}
-                <Text style={styles.slotStrong}>{slot.marks}</Text> — fixed by the exam format.
-                {'\n'}
-                {slot.banked} banked; each paper set uses {slot.perPaper}.
+                {slot.banked} banked · each paper set uses {slot.perPaper} · marks fixed at{' '}
+                {slot.marks}
               </Text>
             ) : null}
-          </>
-        ) : (
-          <>
-            <Select
-              label="Subject"
-              placeholder="Choose a subject…"
-              value={subject || null}
-              options={freeSubjectOptions}
-              onChange={setSubject}
-            />
-            <Input
-              label="Or type another subject"
-              placeholder="e.g. Physics"
-              value={subject}
-              onChangeText={setSubject}
-            />
-          </>
-        )}
-      </Card>
+          </View>
 
-      {mode === 'manual' ? (
-        <>
-          {!enforced ? (
+          {stage === 'manual' ? (
             <>
-              <SectionTitle title="Question type" />
-              <Chips
-                options={FREE_TYPES.map((t) => t.label)}
-                value={FREE_TYPES.find((t) => t.key === qType)?.label ?? 'MCQ'}
-                onChange={(label) => {
-                  const next = FREE_TYPES.find((t) => t.label === label)!.key;
-                  setQType(next);
-                  setMarks(next === 'mcq' ? '1' : '5');
-                }}
-              />
+              {!enforced ? (
+                <>
+                  <CenteredHeading>Question type</CenteredHeading>
+                  <View style={styles.block}>
+                    <PillRow
+                      options={FREE_TYPES.map((t) => t.label)}
+                      value={FREE_TYPES.find((t) => t.key === qType)?.label ?? 'MCQ'}
+                      onChange={(label) => {
+                        const next = FREE_TYPES.find((t) => t.label === label)!.key;
+                        setQType(next);
+                        setMarks(next === 'mcq' ? '1' : '5');
+                      }}
+                    />
+                  </View>
+                </>
+              ) : null}
+
+              <CenteredHeading>Difficulty</CenteredHeading>
+              <View style={styles.block}>
+                <PillRow options={DIFFICULTIES} value={difficulty} onChange={setDifficulty} />
+              </View>
             </>
           ) : null}
+        </>
+      ) : null}
+    </LeafScroll>
+  );
 
-          <SectionTitle title="Difficulty" />
-          <Chips options={DIFFICULTIES} value={difficulty} onChange={setDifficulty} />
+  /** Right leaf — the question form, or the drop zone. */
+  const rightPage =
+    stage === 'manual' ? (
+      <LeafScroll stacked={stacked}>
+        <PageTitle center size={[19, 27]}>
+          Question
+        </PageTitle>
+        <Rule ornament gap={13} />
 
-          <SectionTitle title="Question" />
-          <Card>
-            <Input label="Topic (optional)" placeholder="e.g. Thermodynamics" value={topic} onChangeText={setTopic} />
-            {enforced ? (
-              <Text style={styles.lockedMarks}>
-                <Ionicons name="lock-closed" size={12} /> Marks: {marks} (set by the format)
-              </Text>
+        {/* Topic and marks share a row; marks is read-only once the format
+            fixes the marking scheme. */}
+        <View style={styles.row}>
+          <View style={styles.rowMain}>
+            <Field
+              label="Topic (optional)"
+              placeholder="e.g. Thermodynamics"
+              value={topic}
+              onChangeText={setTopic}
+              palette={p}
+            />
+          </View>
+          <View style={styles.rowSide}>
+            {marksLocked ? (
+              <View>
+                <Text style={styles.fieldLabel}>
+                  Marks <Ionicons name="lock-closed" size={9} color={p.inkFaint} />
+                </Text>
+                <View style={[styles.lockedBox, { borderColor: p.rule, backgroundColor: `${p.pageShade}99` }]}>
+                  {/* Until a quota is chosen the format has not told us the
+                      marking scheme yet — saying "1 mark" would be a guess. */}
+                  <Text style={[styles.lockedText, !slot && styles.lockedPending]}>
+                    {slot ? `${slot.marks} mark${slot.marks === 1 ? '' : 's'}` : 'Set by quota'}
+                  </Text>
+                </View>
+              </View>
             ) : (
-              <Input
+              <Field
                 label="Marks"
                 placeholder="1"
-                keyboardType="number-pad"
                 value={marks}
                 onChangeText={setMarks}
+                keyboardType="number-pad"
+                palette={p}
               />
             )}
-            <Input
-              label="Question text"
-              placeholder="Type the full question…"
-              value={body}
-              onChangeText={setBody}
-              multiline
-              numberOfLines={4}
-              style={styles.multiline}
-            />
-            {activeType === 'mcq' || activeType === 'msq' ? (
-              <>
-                {OPTION_LABELS.map((label, index) => (
-                  <Input
-                    key={label}
-                    label={`Option ${label}`}
-                    placeholder={`Answer choice ${label}`}
-                    value={options[index]}
-                    onChangeText={(text) => setOption(index, text)}
-                  />
-                ))}
-                <Text style={styles.correctLabel}>
-                  {activeType === 'msq' ? 'Correct options (one or more)' : 'Correct option'}
-                </Text>
-                {activeType === 'msq' ? (
-                  <View style={styles.msqRow}>
-                    {OPTION_LABELS.map((label) => {
-                      const on = !!correctMulti[label];
-                      return (
-                        <Pressable
-                          key={label}
-                          onPress={() => setCorrectMulti((prev) => ({ ...prev, [label]: !prev[label] }))}
-                          style={[styles.msqChip, on && styles.msqChipOn]}
-                        >
-                          <Ionicons
-                            name={on ? 'checkbox' : 'square-outline'}
-                            size={16}
-                            color={on ? colors.primary : colors.textDim}
-                          />
-                          <Text style={[styles.msqChipText, on && { color: colors.primary }]}>{label}</Text>
-                        </Pressable>
-                      );
-                    })}
-                  </View>
-                ) : (
-                  <Chips options={OPTION_LABELS} value={correct} onChange={setCorrect} />
-                )}
-              </>
-            ) : activeType === 'numerical' ? (
-              <Input
-                label="Numeric answer"
-                placeholder="e.g. 9.8"
-                keyboardType="numeric"
-                value={numericAnswer}
-                onChangeText={setNumericAnswer}
-              />
-            ) : (
-              <Text style={styles.theoryNote}>
-                Subjective question — no options needed. Model answers are graded offline.
-              </Text>
-            )}
-          </Card>
+          </View>
+        </View>
 
-          <Button
-            title="Submit to Secure Bank"
-            icon="lock-closed-outline"
+        <Field
+          label="Question text"
+          placeholder="Type the full question…"
+          value={body}
+          onChangeText={setBody}
+          multiline
+          palette={p}
+          // Roughly a quarter of the leaf: enough to write in, not so much
+          // that it swallows the options below.
+          inputStyle={{ height: Math.max(88, Math.round((pageWidth || 420) * 0.28)) }}
+        />
+
+        <View style={styles.addRow}>
+          <QuillButton
+            title="Add question"
             onPress={() => void submitManual()}
             loading={busy}
             disabled={enforced && !slot}
           />
-        </>
-      ) : (
-        <>
-          <SectionTitle title="Import from PDF (NLP)" />
-          <Card>
-            <Text style={styles.pdfBlurb}>
-              Upload a PDF of questions. The AI service extracts and structures them for review —
-              nothing is saved until you confirm, and every question still has to fit the exam
-              format's quota.
-            </Text>
-            <Button
-              title={pdfName ? `Re-pick PDF (${pdfName})` : 'Choose PDF file'}
-              variant="ghost"
-              icon="document-attach-outline"
-              onPress={() => void onPickPdf()}
-              loading={extracting}
-            />
-            {engine ? (
-              <Text style={styles.engineNote}>
-                Parsed by: {engine === 'claude' ? 'Claude NLP' : engine === 'offline-fallback' ? 'offline parser (LLM unavailable)' : 'offline parser'}
-              </Text>
-            ) : null}
-          </Card>
+        </View>
 
-          {extracted.length > 0 ? (
-            <>
-              <SectionTitle title={`Review (${selectedCount}/${extracted.length} selected)`} />
-              {extracted.map((q, i) => {
-                const isSel = !!picked[i];
+        {activeType === 'mcq' || activeType === 'msq' ? (
+          <>
+            <Rule gap={12} />
+            {/* A/B on one line, C/D on the next. */}
+            {[0, 2].map((start) => (
+              <View key={start} style={styles.row}>
+                {[start, start + 1].map((i) => (
+                  <View key={i} style={styles.rowHalf}>
+                    <Field
+                      label={`Option ${OPTION_LABELS[i]}`}
+                      placeholder={`Answer choice ${OPTION_LABELS[i]}`}
+                      value={options[i]}
+                      onChangeText={(text) => setOption(i, text)}
+                      palette={p}
+                    />
+                  </View>
+                ))}
+              </View>
+            ))}
+
+            <Text style={styles.fieldLabel}>
+              {activeType === 'msq' ? 'Correct options (one or more)' : 'Correct option'}
+            </Text>
+            <View style={styles.correctRow}>
+              {OPTION_LABELS.map((label) => {
+                const on =
+                  activeType === 'msq' ? !!correctMulti[label] : correct === label;
                 return (
-                  <Pressable key={i} onPress={() => setPicked((p) => ({ ...p, [i]: !p[i] }))}>
-                    <Card style={isSel ? styles.cardSelected : undefined}>
-                      <View style={styles.reviewRow}>
-                        <Ionicons
-                          name={isSel ? 'checkbox' : 'square-outline'}
-                          size={22}
-                          color={isSel ? colors.primary : colors.textDim}
-                        />
-                        <View style={{ flex: 1 }}>
-                          <View style={styles.reviewTags}>
-                            <View style={styles.typePill}>
-                              <Text style={styles.typePillText}>
-                                {TYPE_SHORT[enforced && slot ? slot.type : q.question_type]}
-                              </Text>
-                            </View>
-                            <Text style={styles.reviewMeta}>
-                              {enforced && slot ? slot.subject : q.subject || subject || 'subject?'} ·{' '}
-                              {enforced && slot ? slot.marks : q.marks} mk
-                            </Text>
-                          </View>
-                          <Text style={styles.reviewBody}>{q.body}</Text>
-                          {q.question_type === 'mcq'
-                            ? q.options.map((o, oi) => (
-                                <Text
-                                  key={oi}
-                                  style={[
-                                    styles.reviewOption,
-                                    oi === q.correct_index && styles.reviewCorrect,
-                                  ]}
-                                >
-                                  {String.fromCharCode(65 + oi)}. {o || '—'}
-                                  {oi === q.correct_index ? '  ✓' : ''}
-                                </Text>
-                              ))
-                            : null}
-                        </View>
-                      </View>
-                    </Card>
+                  <Pressable
+                    key={label}
+                    accessibilityRole="button"
+                    accessibilityLabel={`Option ${label}`}
+                    accessibilityState={{ selected: on }}
+                    onPress={() =>
+                      activeType === 'msq'
+                        ? setCorrectMulti((prev) => ({ ...prev, [label]: !prev[label] }))
+                        : setCorrect(label)
+                    }
+                    style={[
+                      styles.correctKey,
+                      { borderColor: on ? p.gold : p.rule },
+                      on && { backgroundColor: p.goldSoft, borderWidth: 2 },
+                    ]}
+                  >
+                    <Text style={[styles.correctKeyText, { color: on ? p.ink : p.inkDim }]}>
+                      {label}
+                    </Text>
                   </Pressable>
                 );
               })}
+            </View>
+          </>
+        ) : activeType === 'numerical' ? (
+          <Field
+            label="Numeric answer"
+            placeholder="e.g. 9.8"
+            value={numericAnswer}
+            onChangeText={setNumericAnswer}
+            keyboardType="numeric"
+            palette={p}
+          />
+        ) : (
+          <Text style={styles.theoryNote}>
+            Subjective question — no options needed. Model answers are graded offline.
+          </Text>
+        )}
 
-              <Button
-                title={
-                  importProgress
-                    ? `Importing ${importProgress}…`
-                    : `Import ${selectedCount} question(s)`
-                }
-                icon="cloud-upload-outline"
-                onPress={() => void importSelected()}
-                loading={importing}
-                disabled={enforced && !slot}
-                style={{ marginTop: spacing.sm }}
+        <Rule gap={12} />
+        <QuillButton
+          title="Submit to Secure Bank"
+          onPress={() => void submitManual()}
+          loading={busy}
+          disabled={enforced && !slot}
+        />
+      </LeafScroll>
+    ) : (
+      <View style={stacked ? styles.dropStacked : styles.flex}>
+        <PageTitle center size={[19, 27]}>
+          Question Upload
+        </PageTitle>
+        <Rule ornament gap={13} />
+        {extracting ? (
+          <ArchiveWorking label="Reading the manuscript…" />
+        ) : (
+          <UploadDropZone
+            title="Question Upload"
+            fileName={pdfName}
+            busy={extracting}
+            onPress={() => void onPickPdf()}
+          />
+        )}
+        {engine ? (
+          <Text style={styles.engineNote}>
+            Parsed by{' '}
+            {engine === 'claude'
+              ? 'Claude NLP'
+              : engine === 'offline-fallback'
+                ? 'the offline parser (LLM unavailable)'
+                : 'the offline parser'}
+          </Text>
+        ) : null}
+      </View>
+    );
+
+  /* -------------------------------- render -------------------------------- */
+
+  // Questions can only target an exam the Admin has scheduled.
+  const noExams = exams.length === 0;
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle={`Teacher · ${stage === 'pdf' ? 'Import PDF' : 'Type manually'}`}
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onIndexSelect} />
+        )}
+
+        {noExams ? (
+          <View style={styles.fixedStage}>
+            <View style={[styles.noExams, { borderColor: p.rule, backgroundColor: p.page }]}>
+              <Ionicons name="calendar-clear-outline" size={28} color={p.inkFaint} />
+              <Text style={styles.noExamsTitle}>No exams scheduled yet</Text>
+              <Text style={styles.noExamsText}>
+                Questions can only be submitted for an exam scheduled by the Admin. This page
+                unlocks the moment one is scheduled.
+              </Text>
+            </View>
+          </View>
+        ) : stacked ? (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingHorizontal: outerPad, paddingBottom: 20 + insets.bottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            <OpenBook
+              left={leftPage}
+              right={rightPage}
+              leftFolio={exam ? exam.name : 'Choose an exam'}
+              rightFolio={stage === 'pdf' ? 'PDF import' : 'Question sheet'}
+            />
+          </ScrollView>
+        ) : (
+          <View style={[styles.fixedStage, { paddingHorizontal: outerPad }]}>
+            <OpenBook
+              left={leftPage}
+              right={rightPage}
+              leftFolio={exam ? exam.name : 'Choose an exam'}
+              rightFolio={stage === 'pdf' ? 'PDF import' : 'Question sheet'}
+            />
+          </View>
+        )}
+      </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onIndexSelect}
+        onClose={() => setIndexOpen(false)}
+      />
+
+      <KingsScroll
+        visible={scrollOpen}
+        title="How will you add questions?"
+        choices={[
+          {
+            key: 'manual',
+            label: 'Type manually',
+            hint: 'Write one question at a time into the bank.',
+            icon: 'brush',
+          },
+          {
+            key: 'pdf',
+            label: 'Import PDF',
+            hint: 'Extract questions from a paper and review them.',
+            icon: 'document-text',
+          },
+        ]}
+        onSelect={(key) => {
+          setStage(key as Stage);
+          setScrollOpen(false);
+        }}
+        onClose={() => setScrollOpen(false)}
+      />
+
+      {/* Subject / section-quota picker. */}
+      <VintagePopup
+        visible={subjectPopup}
+        title={enforced ? 'Section quota' : 'Subject'}
+        onClose={() => setSubjectPopup(false)}
+      >
+        <ScrollView style={styles.popupScroll} showsVerticalScrollIndicator={false}>
+          {enforced ? (
+            slots.length === 0 ? (
+              <Text style={styles.popupEmpty}>
+                No quota is open to you for this exam. Ask the Admin about your subject assignment.
+              </Text>
+            ) : (
+              slots.map((s) => (
+                <PopupRow
+                  key={s.key}
+                  label={s.label}
+                  hint={`${s.banked} in the bank · each paper set uses ${s.perPaper}`}
+                  tag={s.banked < s.perPaper * setCount ? 'NEEDS MORE' : undefined}
+                  active={s.key === slotKey}
+                  onPress={() => {
+                    setSlotKey(s.key);
+                    setSubjectPopup(false);
+                  }}
+                />
+              ))
+            )
+          ) : freeSubjects.length === 0 ? (
+            <Text style={styles.popupEmpty}>No subjects to choose from yet.</Text>
+          ) : (
+            freeSubjects.map((s) => (
+              <PopupRow
+                key={s}
+                label={s}
+                active={s === subject}
+                onPress={() => {
+                  setSubject(s);
+                  setSubjectPopup(false);
+                }}
               />
-            </>
-          ) : null}
-        </>
-      )}
-    </Screen>
+            ))
+          )}
+        </ScrollView>
+      </VintagePopup>
+
+      <ReviewBook
+        visible={reviewOpen}
+        questions={extracted}
+        picked={picked}
+        onToggle={(i) => setPicked((prev) => ({ ...prev, [i]: !prev[i] }))}
+        page={reviewPage}
+        onPage={setReviewPage}
+        onBack={() => setReviewOpen(false)}
+        onImport={() => void importSelected()}
+        importing={importing}
+        importProgress={importProgress}
+        selectedCount={selectedCount}
+        palette={p}
+        statusTone={colors.info}
+      />
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* ------------------------------ leaf helpers ------------------------------ */
+
+/** A leaf scrolls its own content on the spread; phones let the page flow. */
+function LeafScroll({ children, stacked }: { children: React.ReactNode; stacked: boolean }) {
+  if (stacked) return <View>{children}</View>;
+  return (
+    <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+      {children}
+    </ScrollView>
+  );
+}
+
+/** A ruled writing line on the page. */
+function Field({
+  label,
+  palette: p,
+  multiline,
+  inputStyle,
+  ...rest
+}: {
+  label: string;
+  palette: ArchivePalette;
+  multiline?: boolean;
+  inputStyle?: object;
+} & React.ComponentProps<typeof TextInput>) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const [focused, setFocused] = useState(false);
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        placeholderTextColor={`${p.inkFaint}CC`}
+        multiline={multiline}
+        style={[
+          styles.input,
+          multiline && styles.inputMultiline,
+          {
+            borderBottomColor: focused ? p.gold : p.rule,
+            borderBottomWidth: focused ? 2 : 1,
+            backgroundColor: focused ? p.goldSoft : 'transparent',
+          },
+          inputStyle,
+        ]}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        {...rest}
+      />
+    </View>
+  );
+}
+
+/* ------------------------------- review book ------------------------------ */
+
+/**
+ * The second volume: everything the parser found, laid across both leaves,
+ * with antique arrows at the corners and a folio you can type into.
+ */
+function ReviewBook({
+  visible,
+  questions,
+  picked,
+  onToggle,
+  page,
+  onPage,
+  onBack,
+  onImport,
+  importing,
+  importProgress,
+  selectedCount,
+  palette: p,
+  statusTone,
+}: {
+  visible: boolean;
+  questions: ExtractedQuestion[];
+  picked: Record<number, boolean>;
+  onToggle: (index: number) => void;
+  page: number;
+  onPage: (page: number) => void;
+  onBack: () => void;
+  onImport: () => void;
+  importing: boolean;
+  importProgress: string | null;
+  selectedCount: number;
+  palette: ArchivePalette;
+  statusTone: string;
+}) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const { isDark } = useTheme();
+  const { stacked, pageWidth } = useArchiveLayout();
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
+  // Room for the back arrow above and the folio + import control below.
+  const bookHeight = stacked ? undefined : Math.max(320, Math.min(winHeight - 250, 560));
+  // Arrows flank the book, so leave them their gutters.
+  const bookWidth = Math.min(winWidth - 140, 1080);
+  const reduced = useReducedMotion();
+  const turn = usePageTurn({ duration: 760, angle: 88 });
+  const slide = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(visible);
+
+  useEffect(() => {
+    if (visible) setMounted(true);
+    if (reduced) {
+      slide.setValue(visible ? 1 : 0);
+      if (!visible) setMounted(false);
+      return;
+    }
+    Animated.timing(slide, {
+      toValue: visible ? 1 : 0,
+      duration: visible ? 620 : 320,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      if (!visible) setMounted(false);
+    });
+  }, [visible, slide, reduced]);
+
+  const perSpread = PER_LEAF * 2;
+  const pageCount = Math.max(1, Math.ceil(questions.length / perSpread));
+  const start = (Math.min(page, pageCount) - 1) * perSpread;
+  // Held one render behind so the outgoing leaf keeps its questions mid-turn.
+  const [shown, setShown] = useState(start);
+  const turning = useRef(false);
+  useEffect(() => {
+    if (!turning.current) setShown(start);
+  }, [start]);
+
+  const goto = (next: number, direction: 1 | -1) => {
+    if (next < 1 || next > pageCount || next === page) return;
+    turning.current = true;
+    turn.turn(direction, () => {
+      onPage(next);
+      turning.current = false;
+    });
+  };
+
+  const leafItems = (side: 0 | 1) =>
+    questions.slice(shown + side * PER_LEAF, shown + (side + 1) * PER_LEAF);
+
+  const leaf = (side: 0 | 1) => (
+    <View style={styles.flex}>
+      <Animated.View style={turn.style}>
+        {leafItems(side).length === 0 ? (
+          <Text style={styles.reviewEmpty}>—</Text>
+        ) : (
+          leafItems(side).map((q, i) => {
+            const index = shown + side * PER_LEAF + i;
+            const on = !!picked[index];
+            return (
+              <Pressable
+                key={index}
+                accessibilityRole="checkbox"
+                accessibilityLabel={q.body}
+                accessibilityState={{ checked: on }}
+                onPress={() => onToggle(index)}
+                style={[
+                  styles.reviewCard,
+                  { borderColor: on ? p.gold : p.rule },
+                  on && { backgroundColor: p.goldSoft, borderWidth: 2 },
+                ]}
+              >
+                <View style={styles.reviewHead}>
+                  <Ionicons
+                    name={on ? 'checkbox' : 'square-outline'}
+                    size={17}
+                    color={on ? p.gold : p.inkFaint}
+                  />
+                  <Seal label={TYPE_SHORT[q.question_type] ?? 'Q'} tone={statusTone} />
+                  <Text style={styles.reviewNo}>#{index + 1}</Text>
+                </View>
+                <Text
+                  style={[styles.reviewBody, { fontSize: fluid(pageWidth, 11.5, 13) }]}
+                  numberOfLines={4}
+                >
+                  {q.body}
+                </Text>
+              </Pressable>
+            );
+          })
+        )}
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.turnShade, turn.shadeStyle]}
+        />
+      </Animated.View>
+    </View>
+  );
+
+  const translateX = slide.interpolate({ inputRange: [0, 1], outputRange: [520, 0] });
+
+  return (
+    <Modal transparent visible={mounted} animationType="none" onRequestClose={onBack} statusBarTranslucent>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: slide }]}>
+        <BlurView intensity={isDark ? 32 : 24} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, styles.reviewScrim]} />
+      </Animated.View>
+
+      <Animated.View
+        style={[styles.reviewStage, { opacity: slide, transform: [{ translateX }] }]}
+        pointerEvents="box-none"
+      >
+        {/* Back out of this volume, above the book — not a page turn. */}
+        <View style={styles.reviewTopRow}>
+          <BookArrow direction="back" variant="back" label="Back to the PDF upload" onPress={onBack} />
+          <Text style={styles.reviewCount}>
+            {selectedCount} of {questions.length} selected
+          </Text>
+        </View>
+
+        <View style={styles.reviewBookRow}>
+          <View style={styles.reviewArrowSlot}>
+            <BookArrow
+              direction="prev"
+              label="Previous page"
+              disabled={page <= 1}
+              onPress={() => goto(page - 1, -1)}
+            />
+          </View>
+
+          <View style={styles.reviewBook}>
+            <OpenBook
+              left={leaf(0)}
+              right={leaf(1)}
+              leftFolio="Extracted questions"
+              rightFolio={`Folio ${page} of ${pageCount}`}
+              // The stage also carries the back arrow, the folio and the
+              // import control, so the book takes what is left rather than
+              // the full-screen height and pushing them off the bottom.
+              height={bookHeight}
+              width={bookWidth}
+            />
+          </View>
+
+          <View style={styles.reviewArrowSlot}>
+            <BookArrow
+              direction="next"
+              label="Next page"
+              disabled={page >= pageCount}
+              onPress={() => goto(page + 1, 1)}
+            />
+          </View>
+        </View>
+
+        <View style={styles.reviewFoot}>
+          <PageIndicator page={Math.min(page, pageCount)} pageCount={pageCount} onGo={(n) => goto(n, n > page ? 1 : -1)} />
+          {/* The import control sits below the book, attached to the archive. */}
+          <View style={stacked ? undefined : styles.importWrap}>
+            <QuillButton
+              title={
+                importProgress
+                  ? `Importing ${importProgress}…`
+                  : `Import ${selectedCount} question${selectedCount === 1 ? '' : 's'}`
+              }
+              onPress={onImport}
+              loading={importing}
+              disabled={selectedCount === 0}
+            />
+          </View>
+        </View>
+      </Animated.View>
+    </Modal>
+  );
+}
+
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    modeRow: {
-      marginBottom: spacing.sm,
+    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    scrollContent: { paddingVertical: 16 },
+    fixedStage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 16 },
+
+    /* left leaf */
+    block: { marginTop: 8, marginBottom: 12 },
+    examList: { marginTop: 10, gap: 7, marginBottom: 12 },
+    examRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      borderWidth: 1,
+      borderRadius: 3,
+      paddingVertical: 9,
+      paddingHorizontal: 11,
     },
-    hint: {
-      color: colors.warning,
-      fontSize: 12,
-      marginTop: spacing.sm,
+    examName: { fontFamily: serif, fontSize: 13, fontWeight: '600', color: p.ink },
+    examDate: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint, marginTop: 1 },
+    chosenExam: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 9,
+      borderWidth: 1,
+      borderRadius: 3,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      marginBottom: 10,
     },
-    formatMeta: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
-    assignedNote: { color: colors.accent, fontSize: 12, marginTop: 4, fontWeight: '600' },
-    bankNote: { color: colors.textDim, fontSize: 12, lineHeight: 17, marginTop: 6 },
-    progressWrap: { marginTop: spacing.md },
-    freeFormNote: { color: colors.textDim, fontSize: 12, lineHeight: 18, marginTop: 6 },
-    slotNote: { color: colors.textDim, fontSize: 12, lineHeight: 18 },
-    slotStrong: { color: colors.text, fontWeight: '700' },
-    lockedMarks: {
-      color: colors.textDim,
-      fontSize: 13,
-      fontWeight: '600',
-      marginBottom: spacing.md,
+    chosenName: { fontFamily: serif, fontSize: 14, fontWeight: '700', color: p.ink },
+    chosenMeta: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, marginTop: 2 },
+    reqLine: { fontFamily: serif, fontSize: 12, color: p.ink, lineHeight: 17 },
+    assigned: { fontFamily: serif, fontSize: 11.5, color: p.gold, marginTop: 4, fontWeight: '700' },
+    bankNote: { fontFamily: serif, fontSize: 11, color: p.inkDim, lineHeight: 16, marginTop: 5 },
+    quotaList: { marginTop: 10, gap: 7 },
+    quota: { borderWidth: 1, borderRadius: 3, paddingVertical: 8, paddingHorizontal: 10 },
+    quotaLabel: { fontFamily: serif, fontSize: 11.5, color: p.ink, fontWeight: '600' },
+    quotaFigures: { alignItems: 'flex-end', marginTop: 3 },
+    quotaCount: { fontFamily: serif, fontSize: 13, fontWeight: '700' },
+    quotaPer: { fontFamily: serif, fontSize: 10, color: p.inkFaint },
+    slotNote: {
+      fontFamily: serif,
+      fontSize: 10.5,
+      color: p.inkDim,
+      textAlign: 'center',
+      marginTop: 7,
+      lineHeight: 15,
     },
-    multiline: {
-      minHeight: 96,
-      textAlignVertical: 'top',
+
+    /* right leaf — form */
+    row: { flexDirection: 'row', gap: 12 },
+    rowMain: { flex: 2 },
+    rowSide: { flex: 1, minWidth: 96 },
+    rowHalf: { flex: 1 },
+    field: { marginBottom: 11 },
+    fieldLabel: {
+      fontFamily: serif,
+      fontSize: 10,
+      fontWeight: '700',
+      letterSpacing: 1.3,
+      textTransform: 'uppercase',
+      color: p.inkFaint,
+      marginBottom: 3,
     },
-    correctLabel: {
-      color: colors.textDim,
-      fontSize: 13,
-      fontWeight: '600',
-      marginBottom: spacing.sm,
+    input: {
+      fontFamily: serif,
+      fontSize: 13.5,
+      color: p.ink,
+      paddingVertical: 7,
+      paddingHorizontal: 8,
+      borderRadius: 2,
     },
+    inputMultiline: { textAlignVertical: 'top', paddingTop: 8 },
+    lockedBox: { borderWidth: 1, borderRadius: 3, paddingVertical: 8, paddingHorizontal: 10 },
+    lockedText: { fontFamily: serif, fontSize: 13, fontWeight: '700', color: p.ink },
+    lockedPending: { color: p.inkFaint, fontWeight: '400', fontStyle: 'italic' },
+    addRow: { alignItems: 'center', marginVertical: 4 },
+    correctRow: { flexDirection: 'row', gap: 8, marginTop: 2 },
+    correctKey: {
+      width: 40,
+      height: 34,
+      borderWidth: 1,
+      borderRadius: 3,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    correctKeyText: { fontFamily: serif, fontSize: 14, fontWeight: '700' },
     theoryNote: {
-      color: colors.textDim,
-      fontSize: 13,
+      fontFamily: serif,
+      fontSize: 12,
       fontStyle: 'italic',
+      color: p.inkDim,
       lineHeight: 18,
     },
-    msqRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
-    msqChip: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      backgroundColor: colors.surfaceAlt,
-    },
-    msqChipOn: { borderColor: colors.primary, backgroundColor: colors.primarySoft },
-    msqChipText: { color: colors.textDim, fontSize: 13, fontWeight: '700' },
-    pdfBlurb: {
-      color: colors.textDim,
-      fontSize: 13,
-      lineHeight: 19,
-      marginBottom: spacing.md,
-    },
+
+    /* right leaf — pdf */
+    dropStacked: { minHeight: 380 },
     engineNote: {
-      color: colors.accent,
-      fontSize: 12,
-      marginTop: spacing.sm,
+      fontFamily: serif,
+      fontSize: 10.5,
+      color: p.gold,
       textAlign: 'center',
+      marginTop: 9,
     },
-    cardSelected: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primarySoft,
-      borderRadius: radius.lg,
+
+    /* popup */
+    popupScroll: { maxHeight: 320 },
+    popupEmpty: {
+      fontFamily: serif,
+      fontSize: 12,
+      color: p.pamphletInkDim,
+      lineHeight: 17,
+      textAlign: 'center',
+      paddingVertical: 8,
     },
-    reviewRow: {
-      flexDirection: 'row',
-      gap: spacing.md,
-      alignItems: 'flex-start',
-    },
-    reviewTags: {
+
+    /* review book */
+    reviewScrim: { backgroundColor: 'rgba(0,0,0,0.42)' },
+    reviewStage: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 16, gap: 10 },
+    reviewTopRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: spacing.sm,
-      marginBottom: 6,
+      gap: 12,
+      alignSelf: 'stretch',
+      justifyContent: 'center',
     },
-    typePill: {
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: 999,
-      paddingHorizontal: 8,
-      paddingVertical: 2,
-    },
-    typePillText: {
-      color: colors.textDim,
-      fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 0.4,
-    },
-    reviewMeta: {
-      color: colors.textDim,
+    reviewCount: {
+      fontFamily: serif,
       fontSize: 12,
+      color: p.onCover,
+      letterSpacing: 1,
     },
-    reviewBody: {
-      color: colors.text,
-      fontSize: 14,
-      lineHeight: 20,
+    reviewBookRow: { flexDirection: 'row', alignItems: 'center', gap: 10, maxWidth: '100%' },
+    reviewArrowSlot: { justifyContent: 'flex-start', paddingTop: 8 },
+    reviewBook: { flexShrink: 1 },
+    reviewFoot: { alignItems: 'center', gap: 12 },
+    importWrap: { marginTop: 2 },
+    reviewCard: {
+      borderWidth: 1,
+      borderRadius: 3,
+      backgroundColor: p.pageShade,
+      paddingVertical: 9,
+      paddingHorizontal: 10,
+      marginBottom: 8,
     },
-    reviewOption: {
-      color: colors.textDim,
-      fontSize: 13,
-      lineHeight: 20,
-      marginTop: 2,
+    reviewHead: { flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 5 },
+    reviewNo: { fontFamily: serif, fontSize: 10, color: p.inkFaint, marginLeft: 'auto' },
+    reviewBody: { fontFamily: serif, color: p.ink, lineHeight: 17 },
+    reviewEmpty: { fontFamily: serif, fontSize: 14, color: p.inkFaint, textAlign: 'center', paddingVertical: 20 },
+    turnShade: { backgroundColor: '#000' },
+
+    /* empty */
+    noExams: {
+      alignItems: 'center',
+      gap: 9,
+      borderWidth: 1,
+      borderRadius: 4,
+      paddingVertical: 30,
+      paddingHorizontal: 26,
+      maxWidth: 420,
     },
-    reviewCorrect: {
-      color: colors.success,
-      fontWeight: '600',
+    noExamsTitle: { fontFamily: serif, fontSize: 16, fontWeight: '700', color: p.ink },
+    noExamsText: {
+      fontFamily: serif,
+      fontSize: 12.5,
+      color: p.inkDim,
+      lineHeight: 18,
+      textAlign: 'center',
     },
   });
