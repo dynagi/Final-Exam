@@ -265,17 +265,37 @@ function AdminTabs() {
       <Tabs.Screen
         name="PrintPreview"
         component={PrintPreviewScreen}
-        options={{ title: 'Print Preview', tabBarLabel: 'Print', tabBarIcon: icon('print-outline') }}
+        options={{
+          title: 'Print Preview',
+          tabBarLabel: 'Print',
+          tabBarIcon: icon('print-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Exams"
         component={ExamsScreen}
-        options={{ title: 'Exams', tabBarIcon: icon('calendar-outline') }}
+        options={{
+          title: 'Exams',
+          tabBarIcon: icon('calendar-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Centers"
         component={CentersScreen}
-        options={{ title: 'Exam Centers', tabBarLabel: 'Centers', tabBarIcon: icon('business-outline') }}
+        options={{
+          title: 'Exam Centers',
+          tabBarLabel: 'Centers',
+          tabBarIcon: icon('business-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
       <Tabs.Screen
         name="Custody"
@@ -304,7 +324,14 @@ function AdminTabs() {
       <Tabs.Screen
         name="Audit"
         component={AuditLogScreen}
-        options={{ title: 'Audit Log', tabBarLabel: 'Audit', tabBarIcon: icon('reader-outline') }}
+        options={{
+          title: 'Audit Log',
+          tabBarLabel: 'Audit',
+          tabBarIcon: icon('reader-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
     </Tabs.Navigator>
   );

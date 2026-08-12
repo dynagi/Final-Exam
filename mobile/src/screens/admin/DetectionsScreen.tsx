@@ -1,6 +1,5 @@
 /**
- * QR Detections — the security event feed, presented as a closed ledger the
- * Admin opens.
+ * QR Detections — the security event feed, presented as a static open book.
  *
  * Every printed page is divided into a grid of frames, each carrying its own
  * HMAC-tagged QR. When a monitoring client (or an admin pasting a code)
@@ -10,16 +9,8 @@
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  Easing,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArchiveBackground,
@@ -33,7 +24,6 @@ import {
   Rule,
   useArchiveLayout,
   useArchivePalette,
-  useReducedMotion,
 } from '../../components/ArchiveBook';
 import { BookButton, BookField, CenteredHeading, Seal } from '../../components/ArchiveControls';
 import { useTheme } from '../../context/ThemeContext';
@@ -70,37 +60,10 @@ export default function DetectionsScreen() {
   const { colors } = useTheme();
   const p = useArchivePalette();
   const styles = useMemo(() => makeStyles(p), [p]);
-  const { stacked, outerPad, sidebarMode, bookWidth, pageHeight } = useArchiveLayout();
+  const { stacked, outerPad, sidebarMode } = useArchiveLayout();
   const insets = useSafeAreaInsets();
-  const reducedMotion = useReducedMotion();
 
   const [indexOpen, setIndexOpen] = useState(false);
-
-  // The ledger starts closed with NOTHING behind the cover mounted. Tapping
-  // mounts the open book (so pages only exist once the animation begins) and
-  // then swings the cover away to reveal it; `opened` unmounts the cover once
-  // the swing finishes.
-  const [revealing, setRevealing] = useState(false);
-  const [opened, setOpened] = useState(false);
-  const coverAnim = useRef(new Animated.Value(0)).current;
-
-  const openLedger = () => {
-    if (revealing) return;
-    if (reducedMotion) {
-      setRevealing(true);
-      setOpened(true);
-      return;
-    }
-    setRevealing(true);
-    Animated.timing(coverAnim, {
-      toValue: 1,
-      duration: 1050,
-      easing: Easing.inOut(Easing.cubic),
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) setOpened(true);
-    });
-  };
 
   const [detections, setDetections] = useState<QrDetection[]>([]);
   const [grid, setGrid] = useState({ cols: 5, rows: 7 });
@@ -323,88 +286,15 @@ export default function DetectionsScreen() {
     </PageScroll>
   );
 
-  const coverInner = (
-    <>
-      <View style={[styles.coverGilt, { borderColor: p.coverHighlight }]} pointerEvents="none" />
-      <View style={[styles.coverSpine, { backgroundColor: p.coverEdge }]} />
-      <View style={styles.coverBody}>
-        <Ionicons name="lock-closed" size={18} color={p.coverHighlight} style={styles.coverIcon} />
-        <Text style={[styles.coverTitle, { color: p.onCover }]}>
-          THE SECURITY{'\n'}INCIDENT LEDGER
-        </Text>
-        <Text style={[styles.coverHint, { color: p.coverHighlight }]}>Tap to open</Text>
-      </View>
-    </>
-  );
-
-  // Nothing but the shut cover exists until the Admin taps it — the open
-  // pages are not in the tree yet, so there is nothing for the cover to sit
-  // in front of.
-  const book = !revealing ? (
-    <View style={styles.closedStage}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Open The Security Incident Ledger"
-        onPress={openLedger}
-        style={[
-          styles.cover,
-          styles.coverStandalone,
-          {
-            width: Math.min((bookWidth ?? 420) * 0.52, 380),
-            height: pageHeight ?? 480,
-            backgroundColor: p.cover,
-            borderColor: p.coverEdge,
-          },
-        ]}
-      >
-        {coverInner}
-      </Pressable>
-    </View>
-  ) : (
-    <View style={styles.bookHolder}>
-      <OpenBook
-        left={leftPage}
-        right={rightPage}
-        leftFolio="Frame monitoring"
-        rightFolio={`${detections.length} event${detections.length === 1 ? '' : 's'} on file`}
-      />
-
-      {/* The cover swings away on its spine to reveal the spread mounted
-          beneath it — it is never shown floating over an already-open book. */}
-      {!opened ? (
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.coverWrap,
-            {
-              opacity: coverAnim.interpolate({
-                inputRange: [0, 0.55, 1],
-                outputRange: [1, 1, 0],
-              }),
-              transform: [
-                { perspective: 1600 },
-                {
-                  rotateY: coverAnim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['0deg', '-100deg'],
-                  }),
-                },
-              ],
-            },
-          ]}
-        >
-          <View
-            style={[
-              styles.cover,
-              styles.coverInFlight,
-              { backgroundColor: p.cover, borderColor: p.coverEdge },
-            ]}
-          >
-            {coverInner}
-          </View>
-        </Animated.View>
-      ) : null}
-    </View>
+  // One static open book, visible from the moment the page loads — no cover,
+  // no tap-to-open, no reveal animation.
+  const book = (
+    <OpenBook
+      left={leftPage}
+      right={rightPage}
+      leftFolio="Frame monitoring"
+      rightFolio={`${detections.length} event${detections.length === 1 ? '' : 's'} on file`}
+    />
   );
 
   return (
@@ -423,7 +313,7 @@ export default function DetectionsScreen() {
         )}
 
         {stacked ? (
-          <Animated.ScrollView
+          <ScrollView
             style={styles.flex}
             contentContainerStyle={[
               styles.scrollContent,
@@ -435,7 +325,7 @@ export default function DetectionsScreen() {
             }
           >
             {book}
-          </Animated.ScrollView>
+          </ScrollView>
         ) : (
           <View style={[styles.stage, { paddingHorizontal: outerPad }]}>{book}</View>
         )}
@@ -461,7 +351,6 @@ const makeStyles = (p: ArchivePalette) =>
     body: { flex: 1, flexDirection: 'row' },
     scrollContent: { paddingVertical: 16 },
     stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
-    bookHolder: { alignSelf: 'stretch' },
 
     /* left page */
     intro: { fontFamily: serif, fontSize: 12.5, color: p.inkDim, lineHeight: 19 },
@@ -518,61 +407,4 @@ const makeStyles = (p: ArchivePalette) =>
       padding: 8,
     },
     countsText: { fontFamily: serif, fontSize: 10.5, lineHeight: 15, color: p.inkDim, flex: 1 },
-
-    /* closed cover */
-    coverWrap: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    // Shared cover chrome. Sizing is applied separately for the two states:
-    // percentage-based while overlaying the mounted book, explicit numeric
-    // dimensions while standing alone before the book exists at all.
-    cover: {
-      borderRadius: 8,
-      borderWidth: 1,
-      overflow: 'hidden',
-      alignItems: 'center',
-      justifyContent: 'center',
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 14 },
-      shadowOpacity: 0.45,
-      shadowRadius: 26,
-      elevation: 16,
-    },
-    coverStandalone: {},
-    coverInFlight: { width: '92%', maxWidth: 460, height: '86%', maxHeight: 560 },
-    closedStage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 24 },
-    coverGilt: {
-      position: 'absolute',
-      top: 12,
-      left: 12,
-      right: 12,
-      bottom: 12,
-      borderRadius: 5,
-      borderWidth: 1,
-      opacity: 0.55,
-    },
-    coverSpine: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 14, opacity: 0.6 },
-    coverBody: { alignItems: 'center', gap: 10, paddingHorizontal: 24 },
-    coverIcon: { marginBottom: 2 },
-    coverTitle: {
-      fontFamily: serif,
-      fontSize: 21,
-      fontWeight: '700',
-      letterSpacing: 2.4,
-      textAlign: 'center',
-      lineHeight: 30,
-    },
-    coverHint: {
-      fontFamily: serif,
-      fontSize: 10.5,
-      letterSpacing: 1.6,
-      textTransform: 'uppercase',
-      marginTop: 6,
-    },
   });

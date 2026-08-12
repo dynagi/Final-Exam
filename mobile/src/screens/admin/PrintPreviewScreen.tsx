@@ -1,38 +1,57 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SvgXml } from 'react-native-svg';
-import { Button, Card, EmptyState, Screen, SectionTitle } from '../../components/UI';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  OpenBook,
+  PageScroll,
+  PageTitle,
+  Rule,
+  fluid,
+  useArchiveLayout,
+  useArchivePalette,
+  usePageTurn,
+} from '../../components/ArchiveBook';
+import { BookButton, CenteredHeading } from '../../components/ArchiveControls';
 import { usePrintPreview } from '../../context/PrintPreviewContext';
-import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { buildAllCopiesHtml, buildPaperHtml, printHtml, sharePaperPdf } from '../../lib/print';
 import { frameQrSvgs, qrSvg } from '../../lib/qr';
-import { labelFor, spacing, ThemeColors } from '../../lib/theme';
+import { labelFor, serif } from '../../lib/theme';
 import { PaperQuestionContent, PaperViewQuestion, PrintedCopy } from '../../lib/types';
+import { useAdminIndex } from './useAdminIndex';
+
+const SELF = 'PrintPreview';
 
 /** One question, rendered the way the printed copy renders it. */
 function QuestionRow({
   q,
   number,
-  styles,
+  palette: p,
+  pageWidth,
 }: {
   q: PaperQuestionContent | PaperViewQuestion;
   number: number;
-  styles: ReturnType<typeof makeStyles>;
+  palette: ArchivePalette;
+  pageWidth: number;
 }) {
+  const styles = useMemo(() => makeStyles(p), [p]);
   const negative = 'negative_marks' in q ? q.negative_marks : 0;
   const hasOptions = (q.question_type === 'mcq' || q.question_type === 'msq') && q.options.length > 0;
   return (
     <View style={styles.q}>
-      <View style={styles.qHead}>
-        <Text style={styles.qBody}>
-          <Text style={styles.qNum}>Q{number}. </Text>
-          {q.body}
-        </Text>
-      </View>
+      <Text style={[styles.qBody, { fontSize: fluid(pageWidth, 12, 14) }]}>
+        <Text style={styles.qNum}>Q{number}. </Text>
+        {q.body}
+      </Text>
       <View style={styles.qTags}>
-        <View style={styles.qTypePill}>
+        <View style={[styles.qTypePill, { borderColor: p.rule }]}>
           <Text style={styles.qTypePillText}>{labelFor(q.question_type)}</Text>
         </View>
         <Text style={styles.qMarks}>
@@ -47,20 +66,27 @@ function QuestionRow({
           </Text>
         ))
       ) : (
-        <View style={styles.answerSpace} />
+        <View style={[styles.answerSpace, { borderBottomColor: p.rule }]} />
       )}
     </View>
   );
 }
 
 export default function PrintPreviewScreen() {
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const p = useArchivePalette();
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
   const { lastPrint } = usePrintPreview();
 
+  const [indexOpen, setIndexOpen] = useState(false);
   const [selected, setSelected] = useState<PrintedCopy | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // A short, soft turn on the preview leaf only — not the whole book —
+  // whenever the selected copy changes.
+  const copyTurn = usePageTurn({ duration: 650, angle: 62 });
 
   // Default to copy #1 whenever a new print result arrives.
   useEffect(() => {
@@ -82,15 +108,64 @@ export default function PrintPreviewScreen() {
     };
   }, [selected]);
 
+  const { items, onSelect } = useAdminIndex({
+    active: SELF,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
+
+  const selectCopy = (copy: PrintedCopy, direction: 1 | -1) => {
+    if (copy.id === selected?.id) return;
+    copyTurn.turn(direction, () => setSelected(copy));
+  };
+
+  const shell = (content: React.ReactNode) => (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Admin · Print Preview"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+        )}
+        {stacked ? (
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingHorizontal: outerPad, paddingBottom: 20 + insets.bottom },
+            ]}
+            showsVerticalScrollIndicator={false}
+          >
+            {content}
+          </ScrollView>
+        ) : (
+          <View style={[styles.stage, { paddingHorizontal: outerPad }]}>{content}</View>
+        )}
+      </View>
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
+      />
+    </View>
+  );
+
   if (!lastPrint || !selected) {
-    return (
-      <Screen>
-        <EmptyState
-          icon="print-outline"
-          title="No printed paper to preview"
-          subtitle="Run a Print Ceremony from the Papers tab. The decrypted paper, its QR codes and a print preview open here automatically."
-        />
-      </Screen>
+    return shell(
+      <View style={styles.empty}>
+        <Ionicons name="print-outline" size={28} color={p.inkFaint} />
+        <Text style={styles.emptyTitle}>No printed paper to preview</Text>
+        <Text style={styles.emptyText}>
+          Run a Print Ceremony from the Papers page. The decrypted paper, its QR codes and a
+          print preview open here automatically.
+        </Text>
+      </View>
     );
   }
 
@@ -144,56 +219,81 @@ export default function PrintPreviewScreen() {
     }
   };
 
-  return (
-    <Screen scroll>
-      <SectionTitle title="Select copy" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.copyRow}>
-        {lastPrint.copyList.map((c) => {
+  /* -------------------------------- pages -------------------------------- */
+
+  const leftPage = (
+    <PageScroll>
+      <PageTitle center size={[19, 27]}>
+        Print Ceremony
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      <CenteredHeading>Select Copy</CenteredHeading>
+      <View style={styles.copyRow}>
+        {lastPrint.copyList.map((c, i) => {
           const active = c.id === selected.id;
+          const selIndex = lastPrint.copyList.findIndex((x) => x.id === selected.id);
           return (
             <Pressable
               key={c.id}
-              onPress={() => setSelected(c)}
-              style={[styles.copyPill, active && styles.copyPillActive]}
+              onPress={() => selectCopy(c, i > selIndex ? 1 : -1)}
+              style={[
+                styles.copyPill,
+                { borderColor: active ? p.gold : p.rule },
+                active && { backgroundColor: p.goldSoft, borderWidth: 2 },
+              ]}
             >
-              <Text style={[styles.copyPillText, active && styles.copyPillTextActive]}>
+              <Text style={[styles.copyPillText, { color: active ? p.ink : p.inkDim }]}>
                 #{c.copy_number}
               </Text>
             </Pressable>
           );
         })}
-      </ScrollView>
-
-      <View style={styles.actions}>
-        <Button
-          title={`Print all ${lastPrint.copies} copies — one file`}
-          icon="print"
-          onPress={() => void doPrintAll()}
-          loading={busy}
-        />
-        <Button
-          title={`Print this copy only (#${selected.copy_number})`}
-          variant="ghost"
-          icon="document-outline"
-          onPress={() => void doPrintCopy()}
-          style={{ marginTop: spacing.sm }}
-        />
-        <Button
-          title={Platform.OS === 'web' ? 'Save all as PDF' : 'Export all as PDF'}
-          variant="ghost"
-          icon="share-outline"
-          onPress={() => void doShareAll()}
-          style={{ marginTop: spacing.sm }}
-        />
       </View>
 
-      <SectionTitle title="Print preview" />
-      {/* WYSIWYG-ish rendering of the printable paper. */}
-      <Card style={styles.sheet}>
-        <View style={styles.sheetHeader}>
-          <View style={{ flex: 1 }}>
+      <Rule gap={16} />
+
+      <CenteredHeading>Actions</CenteredHeading>
+      <View style={styles.actions}>
+        <BookButton
+          title={`Print all ${lastPrint.copies} copies — one file`}
+          icon="print"
+          variant="gold"
+          loading={busy}
+          onPress={() => void doPrintAll()}
+        />
+        <View style={styles.actionGap} />
+        <BookButton
+          title={`Print this copy only (#${selected.copy_number})`}
+          icon="document-outline"
+          loading={busy}
+          onPress={() => void doPrintCopy()}
+        />
+        <View style={styles.actionGap} />
+        <BookButton
+          title={Platform.OS === 'web' ? 'Save all as PDF' : 'Export all as PDF'}
+          icon="share-outline"
+          loading={busy}
+          onPress={() => void doShareAll()}
+        />
+      </View>
+    </PageScroll>
+  );
+
+  const rightPage = (
+    <PageScroll>
+      <PageTitle center size={[19, 27]}>
+        Print Preview
+      </PageTitle>
+      <Rule ornament gap={12} />
+
+      <Animated.View style={copyTurn.style}>
+        <View style={[styles.sheetHeader, { borderBottomColor: p.rule }]}>
+          <View style={styles.flex}>
             <Text style={styles.examName}>{paper.exam_name || 'Examination'}</Text>
-            <Text style={styles.paperTitle}>{paper.title}</Text>
+            <Text style={[styles.paperTitle, { fontSize: fluid(pageWidth, 15, 19) }]}>
+              {paper.title}
+            </Text>
             <Text style={styles.paperSub}>
               {paper.format_display_name ? `${paper.format_display_name} · ` : ''}
               Subject: {paper.subject} ·{' '}
@@ -206,7 +306,7 @@ export default function PrintPreviewScreen() {
             </Text>
           </View>
           <View style={styles.qrWrap}>
-            {qr ? <SvgXml xml={qr} width={96} height={96} /> : null}
+            {qr ? <SvgXml xml={qr} width={88} height={88} /> : null}
             <Text style={styles.qrCap}>Signed QR</Text>
             {selected.trace_code ? (
               <Text style={styles.traceCap}>TRACE {selected.trace_code}</Text>
@@ -214,9 +314,9 @@ export default function PrintPreviewScreen() {
           </View>
         </View>
 
-        <View style={styles.instructions}>
-          <Ionicons name="information-circle-outline" size={14} color={colors.textDim} />
-          <View style={{ flex: 1 }}>
+        <View style={[styles.instructions, { backgroundColor: `${p.pageShade}CC`, borderColor: p.rule }]}>
+          <Ionicons name="information-circle-outline" size={14} color={p.inkDim} />
+          <View style={styles.flex}>
             {(paper.instructions?.length
               ? paper.instructions
               : [
@@ -235,185 +335,123 @@ export default function PrintPreviewScreen() {
         {paper.sections?.length
           ? paper.sections.map((section) => (
               <View key={section.name}>
-                <View style={styles.sectionHead}>
+                <View style={[styles.sectionHead, { borderColor: p.rule }]}>
                   <Text style={styles.sectionName}>{section.name}</Text>
                   <Text style={styles.sectionMeta}>
                     {section.question_count} Q · {section.marks} marks
                   </Text>
                 </View>
                 {section.questions.map((q) => (
-                  <QuestionRow key={q.id} q={q} number={q.number} styles={styles} />
+                  <QuestionRow key={q.id} q={q} number={q.number} palette={p} pageWidth={pageWidth} />
                 ))}
               </View>
             ))
           : paper.questions.map((q, i) => (
-              <QuestionRow key={i} q={q} number={i + 1} styles={styles} />
+              <QuestionRow key={i} q={q} number={i + 1} palette={p} pageWidth={pageWidth} />
             ))}
-      </Card>
-    </Screen>
+
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, styles.turnShade, copyTurn.shadeStyle]}
+        />
+      </Animated.View>
+    </PageScroll>
+  );
+
+  return shell(
+    <OpenBook
+      left={leftPage}
+      right={rightPage}
+      leftFolio="Print ceremony"
+      rightFolio={`Copy #${selected.copy_number} of ${lastPrint.copies}`}
+    />
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    copyRow: {
-      flexDirection: 'row',
-      gap: spacing.sm,
-      paddingVertical: 2,
+    flex: { flex: 1 },
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
+    scrollContent: { paddingVertical: 16 },
+
+    /* empty state */
+    empty: { alignItems: 'center', gap: 9, paddingHorizontal: 30 },
+    emptyTitle: { fontFamily: serif, fontSize: 16, fontWeight: '700', color: p.ink },
+    emptyText: {
+      fontFamily: serif,
+      fontSize: 12.5,
+      color: p.inkDim,
+      lineHeight: 18,
+      textAlign: 'center',
+      maxWidth: 380,
     },
-    copyPill: {
-      borderWidth: 1,
-      borderColor: colors.border,
-      borderRadius: 999,
-      paddingHorizontal: 14,
-      paddingVertical: 8,
-      backgroundColor: colors.surfaceAlt,
-    },
-    copyPillActive: {
-      borderColor: colors.primary,
-      backgroundColor: colors.primarySoft,
-    },
-    copyPillText: {
-      color: colors.textDim,
-      fontWeight: '700',
-      fontSize: 13,
-    },
-    copyPillTextActive: {
-      color: colors.primary,
-    },
-    actions: {
-      marginTop: spacing.md,
-      marginBottom: spacing.sm,
-    },
-    sheet: {
-      backgroundColor: colors.bgElevated,
-    },
-    sheetHeader: {
-      flexDirection: 'row',
-      gap: spacing.md,
-      borderBottomWidth: 2,
-      borderBottomColor: colors.border,
-      paddingBottom: spacing.md,
-      marginBottom: spacing.md,
-    },
+
+    /* left page */
+    copyRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 7, justifyContent: 'center', marginTop: 8 },
+    copyPill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 13, paddingVertical: 7 },
+    copyPillText: { fontFamily: serif, fontSize: 12.5, fontWeight: '700' },
+    actions: { marginTop: 8 },
+    actionGap: { height: 9 },
+
+    /* right page */
+    sheetHeader: { flexDirection: 'row', gap: 12, borderBottomWidth: 2, paddingBottom: 12, marginBottom: 12 },
     examName: {
-      color: colors.textDim,
-      fontSize: 11,
-      letterSpacing: 1,
+      fontFamily: serif,
+      fontSize: 10,
+      letterSpacing: 1.4,
       textTransform: 'uppercase',
+      color: p.inkFaint,
     },
-    paperTitle: {
-      color: colors.text,
-      fontSize: 18,
-      fontWeight: '800',
-      marginTop: 2,
+    paperTitle: { fontFamily: serif, fontWeight: '700', color: p.ink, marginTop: 2 },
+    paperSub: { fontFamily: serif, fontSize: 11, color: p.inkDim, marginTop: 5, lineHeight: 16 },
+    copyLine: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint, marginTop: 4 },
+    qrWrap: { alignItems: 'center', backgroundColor: '#fff', padding: 6, borderRadius: 6 },
+    qrCap: { fontFamily: serif, fontSize: 8.5, color: '#555', marginTop: 2 },
+    traceCap: { fontFamily: serif, fontSize: 8.5, fontWeight: '700', letterSpacing: 0.5, color: p.gold, marginTop: 2 },
+
+    instructions: {
+      flexDirection: 'row',
+      gap: 7,
+      alignItems: 'flex-start',
+      borderWidth: 1,
+      borderRadius: 4,
+      padding: 9,
+      marginBottom: 12,
     },
-    paperSub: {
-      color: colors.textDim,
-      fontSize: 12,
-      marginTop: 4,
-    },
-    copyLine: {
-      color: colors.textFaint,
-      fontSize: 11,
-      marginTop: 4,
-    },
-    qrWrap: {
-      alignItems: 'center',
-      backgroundColor: '#fff',
-      padding: 6,
-      borderRadius: 8,
-    },
-    qrCap: {
-      color: '#555',
-      fontSize: 9,
-      marginTop: 2,
-    },
-    traceCap: {
-      color: colors.accent,
-      fontSize: 9,
-      fontWeight: '800',
-      letterSpacing: 0.5,
-      marginTop: 2,
-    },
+    instructionsText: { fontFamily: serif, fontSize: 11, lineHeight: 16, color: p.inkDim, flex: 1 },
+
     sectionHead: {
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'baseline',
-      gap: spacing.sm,
+      gap: 8,
       borderTopWidth: 1,
-      borderTopColor: colors.borderLight,
       borderBottomWidth: 1,
-      borderBottomColor: colors.borderLight,
       paddingVertical: 4,
-      marginTop: spacing.md,
+      marginTop: 12,
     },
-    sectionName: { color: colors.text, fontSize: 14, fontWeight: '800', flex: 1 },
-    sectionMeta: { color: colors.textDim, fontSize: 11, fontWeight: '600' },
-    instructions: {
-      flexDirection: 'row',
-      gap: 6,
-      alignItems: 'flex-start',
-      backgroundColor: colors.surfaceAlt,
-      borderRadius: 8,
-      padding: spacing.sm,
-      marginBottom: spacing.md,
-    },
-    instructionsText: {
-      color: colors.textDim,
-      fontSize: 11,
-      lineHeight: 16,
-      flex: 1,
-    },
-    q: {
-      marginBottom: spacing.md,
-    },
-    qHead: {
-      flexDirection: 'row',
-    },
-    qBody: {
-      color: colors.text,
-      fontSize: 14,
-      lineHeight: 20,
-      flex: 1,
-    },
-    qNum: {
-      fontWeight: '800',
-    },
-    qTags: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      marginTop: 4,
-    },
-    qTypePill: {
-      backgroundColor: colors.primary,
-      borderRadius: 999,
-      paddingHorizontal: 7,
-      paddingVertical: 1,
-    },
+    sectionName: { fontFamily: serif, fontSize: 13, fontWeight: '700', color: p.ink, flex: 1 },
+    sectionMeta: { fontFamily: serif, fontSize: 10.5, fontWeight: '700', color: p.inkDim },
+
+    q: { marginTop: 11 },
+    qBody: { fontFamily: serif, color: p.ink, lineHeight: 19 },
+    qNum: { fontWeight: '700' },
+    qTags: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+    qTypePill: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 7, paddingVertical: 1 },
     qTypePillText: {
-      color: colors.onAccent,
+      fontFamily: serif,
       fontSize: 9,
-      fontWeight: '800',
-      letterSpacing: 0.4,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+      color: p.inkDim,
     },
-    qMarks: {
-      color: colors.textDim,
-      fontSize: 11,
-    },
-    option: {
-      color: colors.text,
-      fontSize: 13,
-      lineHeight: 22,
-      marginLeft: spacing.md,
-      marginTop: 2,
-    },
-    answerSpace: {
-      height: 54,
-      borderBottomWidth: 1,
-      borderBottomColor: colors.border,
-      borderStyle: 'dashed',
-      marginTop: spacing.sm,
-    },
+    qMarks: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint },
+    option: { fontFamily: serif, fontSize: 12, color: p.ink, lineHeight: 20, marginLeft: 12, marginTop: 2 },
+    answerSpace: { height: 44, borderBottomWidth: 1, borderStyle: 'dashed', marginTop: 8 },
+
+    turnShade: { backgroundColor: '#000' },
   });

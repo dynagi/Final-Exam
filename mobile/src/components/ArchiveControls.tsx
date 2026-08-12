@@ -935,6 +935,131 @@ export function KeyBlackboard({
   );
 }
 
+/* --------------------------- pencil paper modal ---------------------------- */
+
+/**
+ * The "magic pencil" opening: a single pencil appears centre-stage, rolls
+ * upward, and a sheet of parchment unfolds out from underneath it — the
+ * exact reverse plays on close. One reusable shell for every popup that
+ * simply needs to present an existing form on a sheet of paper (Manage
+ * Paper Sets, Assign Subjects to Teachers, …) with this shared animation
+ * language instead of a generic modal fade.
+ */
+export function AnimatedPencilPaperModal({
+  visible,
+  title,
+  subtitle,
+  onClose,
+  children,
+  width = 460,
+}: {
+  visible: boolean;
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  width?: number;
+}) {
+  const p = useArchivePalette();
+  const { isDark } = useTheme();
+  const reduced = useReducedMotion();
+  const { width: winWidth } = useWindowDimensions();
+  const t = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(visible);
+  const [interactive, setInteractive] = useState(false);
+
+  useEffect(() => {
+    if (visible) setMounted(true);
+    if (reduced) {
+      t.setValue(visible ? 1 : 0);
+      setInteractive(visible);
+      if (!visible) setMounted(false);
+      return;
+    }
+    setInteractive(false);
+    Animated.timing(t, {
+      toValue: visible ? 1 : 0,
+      // Slow and deliberate — the pencil is doing the opening, not a dialog snapping in.
+      duration: visible ? 1250 : 1150,
+      easing: Easing.bezier(0.4, 0, 0.2, 1),
+      useNativeDriver: true,
+    }).start(() => {
+      if (!visible) setMounted(false);
+      else setInteractive(true);
+    });
+  }, [visible, t, reduced]);
+
+  const sheetWidth = Math.min(winWidth - 64, width);
+  // Scales with the sheet so it never looks stretched on a phone or a monitor.
+  const pencilSize = Math.max(42, Math.min(64, sheetWidth * 0.14));
+
+  // The complete pencil rests horizontal at both ends and is never hidden —
+  // it is the roller the scroll is wound on. It settles, rolls one full turn
+  // while it lifts into its resting slot above the paper, and lands flat
+  // again — the same motion runs in reverse in on close.
+  const pencilTranslateY = t.interpolate({ inputRange: [0, 0.12, 0.55, 1], outputRange: [22, 22, 0, 0] });
+  const pencilRotate = t.interpolate({ inputRange: [0, 0.12, 1], outputRange: ['-45deg', '-45deg', '315deg'] });
+
+  // The parchment unrolls out from under the pencil: anchored at its own top
+  // edge, it grows downward rather than fading in.
+  const paperOpacity = t.interpolate({ inputRange: [0, 0.15, 0.4, 1], outputRange: [0, 0.4, 1, 1] });
+  const paperScaleY = t.interpolate({ inputRange: [0, 0.15, 0.55, 1], outputRange: [0.03, 0.1, 0.7, 1] });
+
+  return (
+    <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: t }]}>
+        <BlurView intensity={isDark ? 20 : 14} tint={isDark ? 'dark' : 'light'} style={StyleSheet.absoluteFill} />
+        <View style={[StyleSheet.absoluteFill, styles.pencilScrim]} />
+        <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close" onPress={onClose} />
+      </Animated.View>
+
+      <View style={styles.pencilCenter} pointerEvents="box-none">
+        <View style={{ width: sheetWidth, alignItems: 'center' }} pointerEvents="box-none">
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.pencilWrap, { transform: [{ translateY: pencilTranslateY }, { rotate: pencilRotate }] }]}
+          >
+            <Ionicons name="pencil" size={pencilSize} color={p.gold} />
+          </Animated.View>
+
+          <Animated.View
+            style={[
+              styles.pencilPaper,
+              {
+                width: sheetWidth,
+                backgroundColor: p.pamphlet,
+                borderColor: p.pamphletEdge,
+                opacity: paperOpacity,
+                transform: [{ scaleY: paperScaleY }],
+                transformOrigin: 'center top',
+              },
+            ]}
+            pointerEvents={interactive ? 'auto' : 'none'}
+          >
+            <LinearGradient
+              colors={[p.pamphletShade, p.pamphlet, p.pamphletShade]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <PageGrain />
+            <Text style={[styles.pencilTitle, { color: p.pamphletInk }]}>{title}</Text>
+            {subtitle ? <Text style={[styles.pencilSubtitle, { color: p.pamphletInkDim }]}>{subtitle}</Text> : null}
+            <View style={[styles.pencilRule, { backgroundColor: `${p.pamphletEdge}66` }]} />
+            <ScrollView
+              style={styles.pencilScroll}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          </Animated.View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 /* -------------------------------- text field ------------------------------ */
 
 /** A ruled writing line on the page, rather than a boxed web input. */
@@ -1823,4 +1948,47 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   approveText: { fontFamily: serif, fontSize: 12.5, fontWeight: '700', letterSpacing: 1.2 },
+
+  /* pencil paper modal */
+  pencilScrim: { backgroundColor: 'rgba(0,0,0,0.4)' },
+  pencilCenter: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  pencilWrap: {
+    marginBottom: 2,
+    zIndex: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  pencilPaper: {
+    maxWidth: '100%',
+    maxHeight: '82%',
+    borderWidth: 1,
+    borderRadius: 3,
+    paddingTop: 18,
+    paddingBottom: 10,
+    paddingHorizontal: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.5,
+    shadowRadius: 28,
+    elevation: 22,
+  },
+  pencilTitle: {
+    fontFamily: serif,
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
+  pencilSubtitle: {
+    fontFamily: serif,
+    fontSize: 11.5,
+    lineHeight: 16,
+    textAlign: 'center',
+    marginTop: 6,
+  },
+  pencilRule: { height: 1, marginTop: 12, marginBottom: 12 },
+  pencilScroll: { flexGrow: 0 },
 });
