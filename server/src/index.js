@@ -25,6 +25,8 @@ const {
   checkQuestionSlot,
   buildCustomBlueprint,
   buildPaperView,
+  BANK_HEADROOM,
+  slotCeiling,
 } = require('./examFormats');
 
 const {
@@ -132,34 +134,38 @@ function normaliseTraceCode(raw) {
   return cleaned.length === TRACE_LENGTH ? cleaned : null;
 }
 
-/* ----------------------------- frame watermark ---------------------------- */
+/* --------------------------- per-question QR tags -------------------------- */
 
 /**
- * Every printed page is divided into a fixed grid; each cell carries its own
- * QR. A photograph of part of a sheet therefore identifies not just the copy
- * but the page and the frame within it — roughly, which questions were in
- * shot.
+ * Every question carries its own QR, printed in the paper's own whitespace
+ * beside that question's answer area.
  *
- * Grid choice is the coverage trade-off. A window of (cell + symbol) is what
- * guarantees a WHOLE symbol lands inside it wherever the shot is framed, so
- * finer grids need smaller captures but print smaller symbols:
- *   4 x 6  ->  52 mm cells, 32 mm symbols, needs an ~85 mm fragment
- *   5 x 7  ->  42 mm cells, 26 mm symbols, needs an ~68 mm fragment
- * 5 x 7 keeps the symbol comfortably above 0.8 mm per module at ECC H while
- * a quarter-page photo still resolves the frame.
+ * This replaces the old faint full-page watermark grid. The forensic reach is
+ * the same — a photograph of a single question names the copy it came from
+ * AND which question was in shot — but anchoring on the question instead of a
+ * grid cell buys two things. The symbol sits in whitespace rather than under
+ * the text, so it can be printed at full contrast and actually decodes from a
+ * phone snap; and question 7 is question 7 however the paper reflows, whereas
+ * a grid cell moved whenever the layout did.
  */
-const FRAME_COLS = 5;
-const FRAME_ROWS = 7;
-const FRAMES_PER_PAGE = FRAME_COLS * FRAME_ROWS;
+
+/** Ceiling on taggable questions — the token carries a 3-digit index. */
+const MAX_TAGGED_QUESTIONS = 999;
+/**
+ * Grid width of the retired watermark, kept only so tokens already printed on
+ * earlier copies still resolve to the cell they were photographed from.
+ */
+const LEGACY_FRAME_COLS = 5;
 /** Repeat sightings of one token by one scanner inside this window fold together. */
 const DETECTION_DEDUP_SEC = Number(process.env.DETECTION_DEDUP_SEC || 120);
 
 const pad2 = (n) => String(n).padStart(2, '0');
+const pad3 = (n) => String(n).padStart(3, '0');
 
 /**
- * 4-character tag binding a token to (copy, page, frame). Nothing per-frame
- * is stored — the tag is recomputed on lookup, which proves this server
- * minted the token and makes a forged one useless.
+ * 4-character tag binding a token to (copy, page, question). Nothing
+ * per-question is stored — the tag is recomputed on lookup, which proves this
+ * server minted the token and makes a forged one useless.
  */
 function frameTag(copyId, page, frame) {
   const digest = crypto
@@ -171,27 +177,39 @@ function frameTag(copyId, page, frame) {
   return out;
 }
 
-/** `SAE:<trace12><page2><frame2><tag4>` — 24 chars, a QR version 3 at ECC H. */
+/**
+ * `SAE:<trace12><page2><question3><tag4>` — 25 chars, a QR version 3 at ECC H.
+ *
+ * Copies printed before per-question tagging carry a 2-digit index (24
+ * chars); parseFrameToken still accepts those.
+ */
 function frameToken(traceCodeValue, copyId, page, frame) {
-  return `SAE:${traceCodeValue}${pad2(page)}${pad2(frame)}${frameTag(copyId, page, frame)}`;
+  return `SAE:${traceCodeValue}${pad2(page)}${pad3(frame)}${frameTag(copyId, page, frame)}`;
 }
 
-/** Every frame token for one page of one copy, in row-major order. */
-function pageFrameTokens(traceCodeValue, copyId, page) {
-  return Array.from({ length: FRAMES_PER_PAGE }, (_, i) =>
+/** One token per question, indexed so tokens[n - 1] belongs to question n. */
+function questionFrameTokens(traceCodeValue, copyId, questionCount, page = 1) {
+  const total = Math.max(
+    0,
+    Math.min(MAX_TAGGED_QUESTIONS, Math.trunc(Number(questionCount) || 0))
+  );
+  return Array.from({ length: total }, (_, i) =>
     frameToken(traceCodeValue, copyId, page, i + 1)
   );
 }
 
-/** "R2C3" — where on the sheet frame 7 of a 4-wide grid sits. */
-function frameLabel(frame) {
+/** "Q7" — which question the scanned symbol was printed beside. */
+function frameLabel(frame, legacy = false) {
+  if (!legacy) return `Q${frame}`;
   const index = frame - 1;
-  return `R${Math.floor(index / FRAME_COLS) + 1}C${(index % FRAME_COLS) + 1}`;
+  return `R${Math.floor(index / LEGACY_FRAME_COLS) + 1}C${(index % LEGACY_FRAME_COLS) + 1}`;
 }
 
 /**
- * Parse a scanned token. Accepts the frame form and the plain patch-7 trace
- * code, since a scanner may report either. Returns null if it is neither.
+ * Parse a scanned token. Accepts the current 3-digit question form, the
+ * 2-digit grid form still in circulation on already-printed copies, and the
+ * plain patch-7 trace code, since a scanner may report any of them. Returns
+ * null if it is none of them.
  */
 function parseFrameToken(raw) {
   const cleaned = String(raw || '')
@@ -199,15 +217,18 @@ function parseFrameToken(raw) {
     .replace(/^SAE[:\-\s]*/, '')
     .replace(/[^A-Z0-9]/g, '');
   if (cleaned.length === TRACE_LENGTH) {
-    return { trace: cleaned, page: 1, frame: 0, tag: null, framed: false };
+    return { trace: cleaned, page: 1, frame: 0, tag: null, framed: false, legacy: false };
   }
-  if (cleaned.length !== TRACE_LENGTH + 8) return null;
+  // <page2><index2|index3><tag4>; the index width is what dates the token.
+  const rest = cleaned.length - TRACE_LENGTH;
+  if (rest !== 8 && rest !== 9) return null;
+  const width = rest - 6;
   const trace = cleaned.slice(0, TRACE_LENGTH);
   const page = Number(cleaned.slice(TRACE_LENGTH, TRACE_LENGTH + 2));
-  const frame = Number(cleaned.slice(TRACE_LENGTH + 2, TRACE_LENGTH + 4));
-  const tag = cleaned.slice(TRACE_LENGTH + 4);
+  const frame = Number(cleaned.slice(TRACE_LENGTH + 2, TRACE_LENGTH + 2 + width));
+  const tag = cleaned.slice(TRACE_LENGTH + 2 + width);
   if (!Number.isFinite(page) || !Number.isFinite(frame)) return null;
-  return { trace, page, frame, tag, framed: true };
+  return { trace, page, frame, tag, framed: true, legacy: width === 2 };
 }
 
 function signQr(copyId, paperId, copyNumber) {
@@ -756,8 +777,8 @@ app.get('/api/exams/:id/sets', requireRole('paper_setter', 'admin'), async (req,
 
 /**
  * Questions accepted in a single POST /api/questions call. This bounds one
- * HTTP body and one insert — it is NOT a cap on how many questions an exam's
- * bank may hold, which is deliberately unlimited.
+ * HTTP body and one insert; the cap on how many questions an exam's bank may
+ * hold for a given slot is a separate rule — see slotCeiling().
  */
 const BATCH_LIMIT = 500;
 
@@ -791,11 +812,12 @@ function shapeError(q) {
  * Add questions to an exam's bank. Teacher-only, and the ONLY way in (the
  * client insert policy was removed in patch-5).
  *
- * The bank is UNLIMITED: a 25-question Physics paper may be drawn from 500
- * banked Physics questions. What is checked here is alignment, not volume —
- * a question must name a real section of the format and carry a type and
- * marks value that section actually uses, otherwise it could never be
- * selected into a paper. The exact-count rule lives on the paper.
+ * Two rules apply. ALIGNMENT: a question must name a real section of the
+ * format and carry a type and marks value that section actually uses,
+ * otherwise it could never be selected into a paper. VOLUME: each
+ * (section, type, marks) slot is capped at what the exam consumes across all
+ * its paper sets, times BANK_HEADROOM for setter choice — see slotCeiling().
+ * The exact-count rule still lives on the paper.
  * Body: { examId, questions: [ ... ] }
  */
 app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
@@ -805,11 +827,12 @@ app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
     if (!examId) return res.status(400).json({ error: 'examId is required' });
     if (incoming.length === 0) return res.status(400).json({ error: 'No questions supplied' });
     // Per-REQUEST batch guard only — it keeps one payload inside the 15 MB
-    // body limit and one insert inside a sane transaction. The bank itself is
-    // unlimited; the app splits larger imports into consecutive batches.
+    // body limit and one insert inside a sane transaction; the per-slot bank
+    // ceiling is enforced separately below. Larger imports arrive as
+    // consecutive batches.
     if (incoming.length > BATCH_LIMIT) {
       return res.status(400).json({
-        error: `Send at most ${BATCH_LIMIT} questions per request (the question bank itself is unlimited — split larger imports into batches).`,
+        error: `Send at most ${BATCH_LIMIT} questions per request — split larger imports into batches.`,
       });
     }
 
@@ -822,6 +845,31 @@ app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
     const allowedSubjects = await assignedSubjects(examId, req.user.id);
     const rows = [];
     const rejected = [];
+
+    // How full each (section, type, marks) slot already is. Counted with an
+    // exact HEAD query per slot rather than by reading the bank: a large bank
+    // runs past PostgREST's max-rows, and an undercount would wave uploads
+    // through. Only the slots this batch actually touches are queried, and the
+    // tally then rises as rows are accepted so one batch cannot overfill.
+    const setCount = Math.max(1, Math.trunc(Number(exam.paper_set_count) || 1));
+    const slotDepth = new Map();
+    const depthFor = async (key, sectionName, type, marks) => {
+      if (slotDepth.has(key)) return slotDepth.get(key);
+      let query = db
+        .from('questions')
+        .select('*', { count: 'exact', head: true })
+        .eq('exam_id', examId)
+        .eq('question_type', type)
+        .eq('marks', marks);
+      query = sectionName == null
+        ? query.is('section_name', null)
+        : query.eq('section_name', sectionName);
+      const { count, error } = await query;
+      if (error) throw error;
+      const depth = count ?? 0;
+      slotDepth.set(key, depth);
+      return depth;
+    };
 
     for (const [i, raw] of incoming.entries()) {
       const label = `Question ${i + 1}`;
@@ -863,6 +911,25 @@ app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
       if (misaligned) {
         rejected.push(`${label}: ${misaligned}`);
         continue;
+      }
+
+      // Volume: this slot may hold what every paper set consumes, plus
+      // headroom so the setter can still reject a weak question.
+      const cap = slotCeiling(
+        resolved,
+        { section_name: sectionName, question_type: type, marks },
+        setCount
+      );
+      if (cap) {
+        const slotKey = `${sectionName ?? ''}|${type}|${marks}`;
+        const depth = await depthFor(slotKey, sectionName, type, marks);
+        if (depth >= cap.ceiling) {
+          rejected.push(
+            `${label}: ${sectionName} · ${type} · ${marks} marks is full — ${depth} already banked and the ceiling is ${cap.ceiling} (${cap.perPaper} per paper × ${cap.sets} set${cap.sets === 1 ? '' : 's'} × ${BANK_HEADROOM} for choice). Withdraw one before adding another.`
+          );
+          continue;
+        }
+        slotDepth.set(slotKey, depth + 1);
       }
 
       const options = Array.isArray(raw.options) ? raw.options.map((o) => String(o).trim()) : [];
@@ -1445,6 +1512,12 @@ app.post('/api/papers/:id/print', requireRole('admin'), async (req, res, next) =
     // confirmed; older sealed papers fall back to the flat question list.
     const view = paperJson?.view ?? null;
 
+    // One QR per question, so the tokens have to be minted against the count
+    // the printed layout will actually render.
+    const taggedQuestionCount = Array.isArray(view?.sections) && view.sections.length
+      ? view.sections.reduce((n, s) => n + (Number(s.question_count) || 0), 0)
+      : questions.length;
+
     res.json({
       ok: true,
       status: 'printed',
@@ -1463,16 +1536,16 @@ app.post('/api/papers/:id/print', requireRole('admin'), async (req, res, next) =
         format_display_name: view?.format_display_name ?? null,
         set_label: view?.set_label ?? paper.set_label ?? null,
       },
-      // The grid the printer lays down, plus each copy's frame tokens. Only
-      // this server can mint them (they are HMAC-tagged), so they travel with
-      // the ceremony result rather than being derived client-side.
-      frameGrid: { cols: FRAME_COLS, rows: FRAME_ROWS },
+      // Each copy's per-question tokens, aligned so frames[n - 1] is printed
+      // beside question n. Only this server can mint them (they are
+      // HMAC-tagged), so they travel with the ceremony result rather than
+      // being derived client-side.
       copyList: copyRows.map((c) => ({
         id: c.id,
         copy_number: c.copy_number,
         qr_payload: c.qr_payload,
         trace_code: c.trace_code,
-        frames: pageFrameTokens(c.trace_code, c.id, 1),
+        frames: questionFrameTokens(c.trace_code, c.id, taggedQuestionCount),
       })),
     });
   } catch (err) {
@@ -1706,7 +1779,7 @@ app.post('/api/detections', requireDetector, async (req, res, next) => {
       trace_code: parsed.trace,
       page_number: parsed.framed ? parsed.page : 1,
       frame_number: parsed.framed ? parsed.frame : 0,
-      frame_label: parsed.framed ? frameLabel(parsed.frame) : null,
+      frame_label: parsed.framed ? frameLabel(parsed.frame, parsed.legacy) : null,
       qr_token: body.qr_token ?? parsed.trace,
       detected_at: detectedAt.toISOString(),
       timezone: body.timezone ? String(body.timezone).slice(0, 64) : null,
@@ -1742,9 +1815,11 @@ app.post('/api/detections', requireDetector, async (req, res, next) => {
 
     // Live push to every admin dashboard.
     const where = row.location_label ? ` near ${row.location_label}` : '';
-    const which = parsed.framed
-      ? `page ${row.page_number}, frame ${row.frame_number} (${row.frame_label})`
-      : 'an unframed watermark';
+    const which = !parsed.framed
+      ? 'an untagged trace code'
+      : parsed.legacy
+        ? `page ${row.page_number}, frame ${row.frame_number} (${row.frame_label})`
+        : `page ${row.page_number}, question ${row.frame_number}`;
     await db.from('alerts').insert({
       severity: row.alert_level,
       type: 'QR_WATERMARK_DETECTED',
@@ -1798,7 +1873,6 @@ app.get('/api/detections', requireRole('admin'), async (req, res, next) => {
 
     res.json({
       ok: true,
-      grid: { cols: FRAME_COLS, rows: FRAME_ROWS },
       dedup_window_sec: DETECTION_DEDUP_SEC,
       detections: data ?? [],
     });

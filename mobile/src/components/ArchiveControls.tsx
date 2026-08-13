@@ -990,20 +990,23 @@ export function AnimatedPencilPaperModal({
   }, [visible, t, reduced]);
 
   const sheetWidth = Math.min(winWidth - 64, width);
-  // Scales with the sheet so it never looks stretched on a phone or a monitor.
-  const pencilSize = Math.max(42, Math.min(64, sheetWidth * 0.14));
+  // The pencil is the parchment's hidden chamber, so it spans a good share of
+  // the sheet's own width — never a fixed size that could look stretched.
+  const pencilWidth = Math.max(200, Math.min(340, sheetWidth * 0.62));
 
-  // The complete pencil rests horizontal at both ends and is never hidden —
-  // it is the roller the scroll is wound on. It settles, rolls one full turn
-  // while it lifts into its resting slot above the paper, and lands flat
-  // again — the same motion runs in reverse in on close.
-  const pencilTranslateY = t.interpolate({ inputRange: [0, 0.12, 0.55, 1], outputRange: [22, 22, 0, 0] });
-  const pencilRotate = t.interpolate({ inputRange: [0, 0.12, 1], outputRange: ['-45deg', '-45deg', '315deg'] });
+  // The pencil stays horizontal throughout — it never leaves, it just settles
+  // into place while the slot in its barrel opens and the parchment slides
+  // out from directly behind it. Reversing t on close pulls the paper back
+  // inside and the slot shuts.
+  const pencilTranslateY = t.interpolate({ inputRange: [0, 0.12, 0.4, 1], outputRange: [10, 10, 0, 0] });
+  const pencilWobble = t.interpolate({ inputRange: [0, 0.12, 0.3, 0.5, 1], outputRange: ['0deg', '0deg', '-2.5deg', '0deg', '0deg'] });
+  const slotOpacity = t.interpolate({ inputRange: [0, 0.1, 0.25, 1], outputRange: [0.25, 0.25, 1, 1] });
 
-  // The parchment unrolls out from under the pencil: anchored at its own top
-  // edge, it grows downward rather than fading in.
-  const paperOpacity = t.interpolate({ inputRange: [0, 0.15, 0.4, 1], outputRange: [0, 0.4, 1, 1] });
-  const paperScaleY = t.interpolate({ inputRange: [0, 0.15, 0.55, 1], outputRange: [0.03, 0.1, 0.7, 1] });
+  // The parchment emerges from directly behind the pencil's barrel: anchored
+  // at its own top edge (tucked slightly under the pencil), it grows
+  // downward rather than fading in.
+  const paperOpacity = t.interpolate({ inputRange: [0, 0.18, 0.42, 1], outputRange: [0, 0.35, 1, 1] });
+  const paperScaleY = t.interpolate({ inputRange: [0, 0.18, 0.58, 1], outputRange: [0.02, 0.08, 0.7, 1] });
 
   return (
     <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
@@ -1017,9 +1020,9 @@ export function AnimatedPencilPaperModal({
         <View style={{ width: sheetWidth, alignItems: 'center' }} pointerEvents="box-none">
           <Animated.View
             pointerEvents="none"
-            style={[styles.pencilWrap, { transform: [{ translateY: pencilTranslateY }, { rotate: pencilRotate }] }]}
+            style={[styles.pencilWrap, { transform: [{ translateY: pencilTranslateY }, { rotate: pencilWobble }] }]}
           >
-            <Ionicons name="pencil" size={pencilSize} color={p.gold} />
+            <VintagePencil width={pencilWidth} slotOpacity={slotOpacity} palette={p} />
           </Animated.View>
 
           <Animated.View
@@ -1027,6 +1030,10 @@ export function AnimatedPencilPaperModal({
               styles.pencilPaper,
               {
                 width: sheetWidth,
+                // Tucked up behind the pencil's barrel so it reads as sliding
+                // out from inside it, not dropping from below it.
+                marginTop: -Math.round(pencilWidth * 0.13 * 0.55),
+                zIndex: 1,
                 backgroundColor: p.pamphlet,
                 borderColor: p.pamphletEdge,
                 opacity: paperOpacity,
@@ -1059,6 +1066,70 @@ export function AnimatedPencilPaperModal({
     </Modal>
   );
 }
+
+/**
+ * The pencil itself: a horizontal wooden barrel with brass ferrule bands, a
+ * central chamber (with a seam that reads as the slot the parchment slides
+ * out of), and a real tapered graphite tip — not a generic glyph.
+ */
+function VintagePencil({
+  width,
+  slotOpacity,
+  palette: p,
+}: {
+  width: number;
+  slotOpacity: Animated.AnimatedInterpolation<string | number>;
+  palette: ArchivePalette;
+}) {
+  const h = Math.round(width * 0.13);
+  return (
+    <View style={[pencilStyles.row, { width, height: h }]}>
+      <View style={[pencilStyles.eraser, { flex: 1.1, height: h, borderRadius: h / 2 }]} />
+      <View style={[pencilStyles.ferrule, { flex: 0.7, height: h * 0.86 }]} />
+      <View style={[pencilStyles.wood, { flex: 2.4, height: h }]} />
+      <View style={[pencilStyles.band, { flex: 0.35, height: h, backgroundColor: p.gold }]} />
+      <View style={[pencilStyles.barrel, { flex: 3.6, height: h * 1.1 }]}>
+        <Animated.View style={[pencilStyles.slot, { opacity: slotOpacity }]} />
+      </View>
+      <View style={[pencilStyles.band, { flex: 0.35, height: h, backgroundColor: p.gold }]} />
+      <View style={[pencilStyles.wood, { flex: 2.2, height: h }]} />
+      <View
+        style={{
+          width: 0,
+          height: 0,
+          borderTopWidth: h / 2,
+          borderBottomWidth: h / 2,
+          borderLeftWidth: h * 0.9,
+          borderTopColor: 'transparent',
+          borderBottomColor: 'transparent',
+          borderLeftColor: '#D8C39A',
+        }}
+      />
+      <View
+        style={{
+          width: 0,
+          height: 0,
+          borderTopWidth: h * 0.16,
+          borderBottomWidth: h * 0.16,
+          borderLeftWidth: h * 0.34,
+          borderTopColor: 'transparent',
+          borderBottomColor: 'transparent',
+          borderLeftColor: '#2B2620',
+        }}
+      />
+    </View>
+  );
+}
+
+const pencilStyles = StyleSheet.create({
+  row: { flexDirection: 'row', alignItems: 'center' },
+  eraser: { backgroundColor: '#D98A8A', borderWidth: 1, borderColor: '#B85F5F' },
+  ferrule: { backgroundColor: '#9A9994', borderWidth: 1, borderColor: '#6E6D69' },
+  wood: { backgroundColor: '#A6432E' },
+  band: {},
+  barrel: { backgroundColor: '#8C3826', alignItems: 'center', justifyContent: 'center', borderRadius: 2 },
+  slot: { width: '70%', height: 2, borderRadius: 1, backgroundColor: '#2B1A12' },
+});
 
 /* -------------------------------- text field ------------------------------ */
 

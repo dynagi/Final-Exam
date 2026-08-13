@@ -29,17 +29,22 @@ import { useAdminIndex } from './useAdminIndex';
 
 const SELF = 'PrintPreview';
 
-/** One question, rendered the way the printed copy renders it. */
+/**
+ * One question, rendered the way the printed copy renders it — including the
+ * question's own QR sitting in the whitespace to the right of its answer area.
+ */
 function QuestionRow({
   q,
   number,
   palette: p,
   pageWidth,
+  frameSvg,
 }: {
   q: PaperQuestionContent | PaperViewQuestion;
   number: number;
   palette: ArchivePalette;
   pageWidth: number;
+  frameSvg?: string | null;
 }) {
   const styles = useMemo(() => makeStyles(p), [p]);
   const negative = 'negative_marks' in q ? q.negative_marks : 0;
@@ -59,15 +64,25 @@ function QuestionRow({
           {negative > 0 ? `, −${negative}` : ''}]
         </Text>
       </View>
-      {hasOptions ? (
-        q.options.map((o, oi) => (
-          <Text key={oi} style={styles.option}>
-            {String.fromCharCode(65 + oi)}. {o}
-          </Text>
-        ))
-      ) : (
-        <View style={[styles.answerSpace, { borderBottomColor: p.rule }]} />
-      )}
+      <View style={styles.qAnswerRow}>
+        <View style={styles.qAnswerCol}>
+          {hasOptions ? (
+            q.options.map((o, oi) => (
+              <Text key={oi} style={styles.option}>
+                {String.fromCharCode(65 + oi)}. {o}
+              </Text>
+            ))
+          ) : (
+            <View style={[styles.answerSpace, { borderBottomColor: p.rule }]} />
+          )}
+        </View>
+        {frameSvg ? (
+          <View style={styles.qTag}>
+            <SvgXml xml={frameSvg} width={46} height={46} />
+            <Text style={styles.qTagLabel}>Q{number}</Text>
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -82,6 +97,8 @@ export default function PrintPreviewScreen() {
   const [indexOpen, setIndexOpen] = useState(false);
   const [selected, setSelected] = useState<PrintedCopy | null>(null);
   const [qr, setQr] = useState<string | null>(null);
+  /** One rendered QR per question, aligned so `frames[n - 1]` belongs to question n. */
+  const [frames, setFrames] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   // A short, soft turn on the preview leaf only — not the whole book —
@@ -93,16 +110,26 @@ export default function PrintPreviewScreen() {
     setSelected(lastPrint?.copyList?.[0] ?? null);
   }, [lastPrint]);
 
-  // Regenerate the on-screen QR when the selected copy changes.
+  // Regenerate the on-screen QRs when the selected copy changes: the signed
+  // header QR, plus the copy's per-question codes.
   useEffect(() => {
     let active = true;
     if (!selected) {
       setQr(null);
+      setFrames(null);
       return;
     }
     void qrSvg(selected.qr_payload, 150).then((svg) => {
       if (active) setQr(svg);
     });
+    const tokens = selected.frames;
+    if (tokens?.length) {
+      void frameQrSvgs(tokens).then((svgs) => {
+        if (active) setFrames(svgs);
+      });
+    } else {
+      setFrames(null);
+    }
     return () => {
       active = false;
     };
@@ -171,7 +198,7 @@ export default function PrintPreviewScreen() {
 
   const paper = lastPrint.paper;
 
-  // All copies, each with its own header QR and its own grid of frame QRs —
+  // All copies, each with its own header QR and its own per-question QRs —
   // built once for the "one file" actions.
   const buildAllHtml = async () => {
     const copies = await Promise.all(
@@ -342,12 +369,26 @@ export default function PrintPreviewScreen() {
                   </Text>
                 </View>
                 {section.questions.map((q) => (
-                  <QuestionRow key={q.id} q={q} number={q.number} palette={p} pageWidth={pageWidth} />
+                  <QuestionRow
+                    key={q.id}
+                    q={q}
+                    number={q.number}
+                    palette={p}
+                    pageWidth={pageWidth}
+                    frameSvg={frames?.[q.number - 1]}
+                  />
                 ))}
               </View>
             ))
           : paper.questions.map((q, i) => (
-              <QuestionRow key={i} q={q} number={i + 1} palette={p} pageWidth={pageWidth} />
+              <QuestionRow
+                key={i}
+                q={q}
+                number={i + 1}
+                palette={p}
+                pageWidth={pageWidth}
+                frameSvg={frames?.[i]}
+              />
             ))}
 
         <Animated.View
@@ -452,6 +493,18 @@ const makeStyles = (p: ArchivePalette) =>
     qMarks: { fontFamily: serif, fontSize: 10.5, color: p.inkFaint },
     option: { fontFamily: serif, fontSize: 12, color: p.ink, lineHeight: 20, marginLeft: 12, marginTop: 2 },
     answerSpace: { height: 44, borderBottomWidth: 1, borderStyle: 'dashed', marginTop: 8 },
+    // Mirrors the printed answer zone: answer area left, this question's QR
+    // parked in the whitespace at its right.
+    qAnswerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginTop: 2 },
+    qAnswerCol: { flex: 1, minWidth: 0 },
+    qTag: { width: 46, alignItems: 'center', marginTop: 4 },
+    qTagLabel: {
+      fontFamily: 'monospace',
+      fontSize: 8,
+      color: p.inkFaint,
+      marginTop: 2,
+      letterSpacing: 0.4,
+    },
 
     turnShade: { backgroundColor: '#000' },
   });

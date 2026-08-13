@@ -1,7 +1,7 @@
 /**
  * Client-side pagination for the question lists.
  *
- * The bank is deliberately unbounded, so every screen that renders it needs
+ * The bank runs to thousands of rows, so every screen that renders it needs
  * to show a page at a time rather than a thousand cards. The full filtered
  * array stays in memory (the rows are already fetched and small) — only the
  * slice handed to the list changes, which keeps selection state, counts and

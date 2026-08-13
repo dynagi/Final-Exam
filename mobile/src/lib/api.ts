@@ -12,6 +12,7 @@ import {
   PaperValidationResult,
   PrintResult,
   QrDetection,
+  QuestionType,
   Role,
 } from './types';
 import type { CompositionReport, FormatSummary, ResolvedFormat } from './examFormats';
@@ -111,7 +112,9 @@ export const createExam = (body: {
   customSections?: {
     name: string;
     subject: string;
-    question_type: 'mcq';
+    /** The answer style the section takes — the server validates it against
+     *  QUESTION_TYPES and falls back to 'mcq' for anything it does not know. */
+    question_type: QuestionType;
     count: number;
     marks_correct: number;
     negative_marks: number;
@@ -153,8 +156,9 @@ const QUESTION_BATCH = 200;
 
 /**
  * Add questions to an exam's bank. The only route in: section/type/marks
- * alignment is checked here, not in the app. The bank is unlimited, so an
- * import of any size is chunked rather than refused.
+ * alignment is checked here, not in the app, along with the per-slot bank
+ * ceiling. An import of any size is chunked rather than refused; questions
+ * that overflow a slot's ceiling come back in `rejected`.
  *
  * `onProgress` reports (sent, total) after each batch.
  */
@@ -310,7 +314,6 @@ export const reportDetection = (body: {
 export const fetchDetections = (limit = 50) =>
   get(`/api/detections?limit=${limit}`) as unknown as Promise<{
     ok: boolean;
-    grid: { cols: number; rows: number };
     dedup_window_sec: number;
     detections: QrDetection[];
   }>;

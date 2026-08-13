@@ -106,7 +106,7 @@ flowchart LR
 | `exams` | Exam scheduling, `format_code` + `format_year` + a display copy of the resolved blueprint, `paper_set_count`, `allow_question_reuse` | — |
 | `paper_copies` | One row per printed copy: copy number, signed QR payload, fingerprint hash, live status/location | — |
 | `custody_events` | Hash-chained checkpoint scans per copy (`printed → in_transit → at_center → delivered`, or `missing`/`leaked`) | ✅ INSERT |
-| `qr_detections` | Frame-level watermark sightings: copy, page, frame, when, who saw it, where, confidence, repeat count | ✅ |
+| `qr_detections` | Per-question QR sightings: copy, page, question, when, who saw it, where, confidence, repeat count | ✅ |
 | `alerts` | Real-time alerts (severity `info`/`warning`/`critical`) | ✅ INSERT |
 | `audit_log` | Hash-chained, append-only record of every sensitive action | — |
 
@@ -158,11 +158,21 @@ sequenceDiagram
 Questions no longer reach Postgres from the client: patch-5 removes the
 teacher insert policy, so `POST /api/questions` is the only way in.
 
-**The bank itself is unlimited.** What the service checks is *alignment*, not
-volume: a question must name a real section of the format and carry a type and
-marks value that section uses, otherwise it could never be selected into a
-paper. Banking 500 Physics MCQs for a 25-question section is the intended
-shape — the exact-count rule lives on the paper set, not here.
+The service checks two things. **Alignment**: a question must name a real
+section of the format and carry a type and marks value that section uses,
+otherwise it could never be selected into a paper. **Volume**: each
+(section, type, marks) slot is capped at what the exam actually consumes —
+`max per paper × paper sets` — times `BANK_HEADROOM` (2).
+
+The headroom is the point. Capping at exactly what is consumed would mean a
+setter who rejects one weak question could not replace it until somebody
+withdrew another; doubling it keeps real choice while stopping a 25-question
+section from accumulating hundreds of plaintext questions nobody will ever
+draw on. The exact-count rule still lives on the paper set, not here.
+
+Depth is counted with an exact `HEAD` query per slot rather than by reading
+the bank — a large bank runs past PostgREST's max-rows, and an undercount
+would wave uploads through.
 
 ```mermaid
 sequenceDiagram
@@ -287,14 +297,26 @@ sequenceDiagram
     Note over Admin: printed → in_transit → at_center → delivered<br/>Every handoff is timestamped, attributed, chained.
 ```
 
-### Flow E2 — Frame Watermark Detection
+### Flow E2 — Per-Question QR Detection
 
-Every printed page is divided into a **5 × 7 grid of frames**, each carrying
-its own QR. The token is `SAE:<trace12><page2><frame2><tag4>` — 24 characters,
-a QR version 3 at ECC H — where `tag` is an HMAC over (copy, page, frame).
-Nothing per-frame is stored: the copy resolves through
-`paper_copies.trace_code` and the tag is recomputed to prove this server
-minted the token, so a 500-copy run does not write 17 500 rows nobody reads.
+**Every question carries its own QR**, printed in the paper's own whitespace to
+the right of that question's answer area. The token is
+`SAE:<trace12><page2><question3><tag4>` — 25 alphanumeric characters, a QR
+version 2 at ECC Q (25 × 25 modules) — where `tag` is an HMAC over
+(copy, page, question). Nothing per-question is stored: the copy resolves
+through `paper_copies.trace_code` and the tag is recomputed to prove this
+server minted the token, so a 500-copy run does not write one row per symbol.
+
+This replaced an earlier **5 × 7 grid of faint frames** tiled behind the text.
+Anchoring on the question instead of a grid cell wins twice. The symbol now
+sits in whitespace rather than under the glyphs, so it prints at full contrast
+and survives being photographed — the old layer was laid down at 15 % opacity,
+which is what made it marginal to decode. And question 7 is question 7 however
+the paper reflows, whereas a grid cell moved whenever the layout did.
+
+Tokens already printed on earlier copies use a 2-digit index (24 characters);
+the parser still accepts those and labels them with their original `R2C3` grid
+cell rather than a question number.
 
 ```mermaid
 sequenceDiagram
@@ -306,21 +328,21 @@ sequenceDiagram
     Cam->>CS: POST /api/detections { qr_token, scanner_id, confidence, geo… }
     Note over CS: x-detector-key, or an admin/invigilator JWT
     CS->>SB: resolve trace_code -> copy -> paper -> exam
-    Note over CS: recompute HMAC tag for (copy, page, frame)<br/>mismatch = forged/altered copy, rejected + audited
+    Note over CS: recompute HMAC tag for (copy, page, question)<br/>mismatch = forged/altered copy, rejected + audited
     CS->>SB: same token + scanner seen within DETECTION_DEDUP_SEC?
     alt repeat sighting
         CS->>SB: UPDATE qr_detections SET detection_count += 1, last_detected_at
         CS-->>Cam: { deduplicated: true }  — no new alert
     else new sighting
-        CS->>SB: INSERT qr_detections (page, frame, device, IP, geo, confidence…)
+        CS->>SB: INSERT qr_detections (page, question, device, IP, geo, confidence…)
         CS->>SB: INSERT alerts (critical on first sighting of a copy, else warning)
         SB-->>Admin: 🔴 Realtime push — event on the Detections tab in <1s
     end
 ```
 
-A capture of roughly **68 × 68 mm** — about a quarter of an A4 page — is
-guaranteed to contain one complete frame wherever the shot is framed, because
-the guarantee window is (cell + symbol) = 42 + 26 mm.
+A photograph of **a single question** is enough: the symbol is printed at
+18 mm across (0.72 mm per module), so any shot that captures a question and
+its options captures that question's whole code at full contrast.
 
 ### Flow F — Missing Copy / Leak Forensics
 

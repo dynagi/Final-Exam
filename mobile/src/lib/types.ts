@@ -332,11 +332,12 @@ export interface PrintedCopy {
   id: string;
   copy_number: number;
   qr_payload: string;
-  /** Short code identifying this copy in every watermark (see patch-7). */
+  /** Short code identifying this copy in every QR (see patch-7). */
   trace_code?: string | null;
   /**
-   * One HMAC-tagged token per watermark frame, row-major. Minted by the
-   * server — only it holds the key — and printed as the page's QR grid.
+   * One HMAC-tagged token per question, aligned so `frames[n - 1]` belongs to
+   * question n. Minted by the server — only it holds the key — and printed
+   * beside each question's answer area.
    */
   frames?: string[] | null;
 }
@@ -395,8 +396,6 @@ export interface PrintResult {
     format_display_name?: string | null;
     set_label?: string | null;
   };
-  /** Watermark grid the printer lays down, e.g. 4 columns × 6 rows. */
-  frameGrid?: { cols: number; rows: number };
   copyList: PrintedCopy[];
 }
 

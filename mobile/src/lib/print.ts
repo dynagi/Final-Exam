@@ -7,7 +7,9 @@
  * and a footer with the paper code, set and page. It matches PaperPreview
  * one-for-one, so what the setter confirmed is what comes out of the printer.
  *
- * Every copy also carries its own signed QR in the header.
+ * Every copy carries its own signed QR in the header, and one QR per question
+ * printed in the whitespace beside that question's answer area — so a photo of
+ * a single question is enough to name the copy and the question it came from.
  */
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
@@ -28,23 +30,42 @@ const TYPE_TAG: Record<string, string> = {
   theoretical: 'Subjective',
 };
 
+/**
+ * One question, and — beside its answer area — the QR that identifies this
+ * copy and this question.
+ *
+ * Every question type ends in the same two-column "answer zone": the answer
+ * area on the left, the question's own QR parked in the whitespace at its
+ * right. MCQ/MSQ put a two-column option grid there, numerical a ruled blank,
+ * subjective a set of ruled lines — so a mixed (hybrid) paper needs no special
+ * casing, each question simply brings its own answer area to the same frame.
+ */
 function questionHtml(
   q: Pick<PaperQuestionContent, 'question_type' | 'body' | 'options' | 'marks'> & {
     negative_marks?: number;
   },
-  number: number
+  number: number,
+  frameSvg?: string | null
 ): string {
   const penalty = q.negative_marks && q.negative_marks > 0 ? ` / &minus;${q.negative_marks}` : '';
   const hasOptions =
     (q.question_type === 'mcq' || q.question_type === 'msq') && q.options.length > 0;
 
-  const body = hasOptions
+  const answer = hasOptions
     ? `<div class="options">${q.options
         .map((o, i) => `<div class="option"><b>(${String.fromCharCode(65 + i)})</b> ${escapeHtml(o)}</div>`)
         .join('')}</div>`
     : q.question_type === 'numerical'
       ? '<div class="answer"></div>'
       : '<div class="subjective"><div class="line"></div><div class="line"></div><div class="line"></div><div class="line"></div></div>';
+
+  // No token for this question (older ceremony, or a paper longer than the
+  // minted run): the answer area simply takes the full width.
+  const tag = frameSvg
+    ? `<div class="qtag"><img src="data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+        frameSvg
+      )}" alt="" /><span>Q${number}</span></div>`
+    : '';
 
   return `
     <article class="question">
@@ -53,7 +74,10 @@ function questionHtml(
         <div class="qtext">${escapeHtml(q.body)}</div>
         <div class="marks">[${q.marks}${penalty}]</div>
       </div>
-      ${body}
+      <div class="qbody">
+        <div class="qans">${answer}</div>
+        ${tag}
+      </div>
     </article>`;
 }
 
@@ -61,12 +85,17 @@ function questionHtml(
  * The body of the paper. Papers sealed against an exam format carry the
  * section/sub-section layout the setter confirmed; older papers fall back to
  * a flat question list.
+ *
+ * `frameSvgs` is aligned to the printed numbering — `frameSvgs[n - 1]` is the
+ * QR for question n — which holds for both layouts because the view numbers
+ * questions continuously across every section.
  */
-function questionsHtml(result: PrintResult): string {
+function questionsHtml(result: PrintResult, frameSvgs: string[] | null): string {
+  const frameFor = (n: number) => frameSvgs?.[n - 1] ?? null;
   const sections = result.paper.sections;
   if (!sections?.length) {
     return `<section class="section"><div class="subsection">${result.paper.questions
-      .map((q, i) => questionHtml(q, i + 1))
+      .map((q, i) => questionHtml(q, i + 1, frameFor(i + 1)))
       .join('')}</div></section>`;
   }
 
@@ -95,7 +124,7 @@ function questionsHtml(result: PrintResult): string {
                   : ''
               }
             </div>
-            ${group.questions.map((q) => questionHtml(q, q.number)).join('')}
+            ${group.questions.map((q) => questionHtml(q, q.number, frameFor(q.number))).join('')}
           </div>`
           )
           .join('')}
@@ -104,59 +133,12 @@ function questionsHtml(result: PrintResult): string {
     .join('');
 }
 
-/* ------------------------------- watermark -------------------------------- */
-
-/** Ink strength of the watermark. Higher = easier to scan, harder to read past. */
-const WATERMARK_OPACITY = 0.15;
-/** Rotated so the symbols never line up with the text baseline grid. */
-const WATERMARK_ANGLE = -18;
-
-export interface FrameGrid {
-  cols: number;
-  rows: number;
-}
-
-/**
- * The frame watermark layer: the page divided into a fixed grid, each cell
- * carrying its OWN QR.
- *
- * A uniform tile would tell you which copy was photographed; a grid of
- * distinct frames also tells you which part of it, because each token encodes
- * (copy, page, frame). The tokens are minted by the server — only it holds
- * the key that tags them — and arrive with the print-ceremony result.
- *
- * The layer sits behind the content (`z-index: 0`, content at 1) and is
- * `position: fixed`, which paged media repeats on every printed page.
- */
-function watermarkLayer(frameSvgs: string[] | null, grid: FrameGrid): string {
-  if (!frameSvgs?.length) return '';
-  const cellW = 100 / grid.cols;
-  const cellH = 100 / grid.rows;
-
-  const cells = frameSvgs
-    .slice(0, grid.cols * grid.rows)
-    .map((svg, i) => {
-      const col = i % grid.cols;
-      const row = Math.floor(i / grid.cols);
-      const uri = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-      return `<div class="wm-cell" style="left:${(col * cellW).toFixed(4)}%;top:${(
-        row * cellH
-      ).toFixed(4)}%;width:${cellW.toFixed(4)}%;height:${cellH.toFixed(
-        4
-      )}%"><img src="${uri}" alt="" /></div>`;
-    })
-    .join('');
-
-  return `<div class="watermark" aria-hidden="true">${cells}</div>`;
-}
-
 /** One copy rendered as a self-contained, page-breaking A4 paper. */
 function copySection(
   result: PrintResult,
   copy: PrintedCopy,
   qrSvgString: string,
-  frameSvgs: string[] | null = null,
-  grid: FrameGrid = { cols: 5, rows: 7 }
+  frameSvgs: string[] | null = null
 ): string {
   const p = result.paper;
   const questionCount =
@@ -199,7 +181,7 @@ function copySection(
     ? p.instructions
     : [
         'Do not open this booklet until you are instructed to do so.',
-        'This copy is uniquely watermarked and QR-signed; its chain of custody is tracked and any leak is traceable to this copy.',
+        'Every question on this copy carries a unique QR code; its chain of custody is tracked and any leak is traceable to this copy and the exact question photographed.',
       ];
   const instructions = `
     <div class="instructions">
@@ -207,8 +189,9 @@ function copySection(
       <ol>${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('')}</ol>
     </div>`;
 
-  // The trace code is printed as text as well as tiled as QR, so a fragment
-  // that catches the footer identifies the copy even without a decoder.
+  // The trace code is printed as text as well as encoded in every question's
+  // QR, so a fragment that catches the footer identifies the copy even
+  // without a decoder.
   const trace = copy.trace_code
     ? `<span class="trace">TRACE ${escapeHtml(copy.trace_code)}</span>`
     : '';
@@ -221,40 +204,21 @@ function copySection(
       <span>${escapeHtml(result.location)} ${trace}</span>
     </div>`;
 
-  return `<section class="paper">${watermarkLayer(
-    frameSvgs,
-    grid
-  )}<div class="sheet">${header}${instructions}${questionsHtml(result)}${footer}</div></section>`;
+  return `<section class="paper"><div class="sheet">${header}${instructions}${questionsHtml(
+    result,
+    frameSvgs
+  )}${footer}</div></section>`;
 }
 
 const DOC_STYLE = `
   @page { size: A4; margin: 15mm; }
   * { box-sizing: border-box; }
   body { margin: 0; background: #fff; color: #111; font-family: "Times New Roman", Georgia, serif; padding: 0; }
-  section.paper { page-break-after: always; position: relative; }
+  section.paper { page-break-after: always; }
   section.paper:last-child { page-break-after: auto; }
-  /* Frame watermark grid: one distinct QR per cell. Fixed positioning makes
-     paged media repeat it on every sheet; content sits above at full
-     contrast. */
-  .watermark {
-    position: fixed;
-    inset: 0;
-    opacity: ${WATERMARK_OPACITY};
-    z-index: 0;
-    pointer-events: none;
-    /* Browsers strip background graphics when printing unless told not to. */
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  .wm-cell { position: absolute; display: flex; align-items: center; justify-content: center; }
-  .wm-cell img {
-    width: 62%; height: auto; max-height: 82%;
-    transform: rotate(${WATERMARK_ANGLE}deg);
-  }
-  .sheet { position: relative; z-index: 1; }
-  /* Text sits on its own opaque backing so the watermark never reduces
-     contrast behind a glyph — it shows through the gaps instead. */
-  .qtext, .option, .instructions li, .sub-title, .section-title { background: rgba(255,255,255,0.82); }
+  /* Browsers strip graphics when printing unless told not to — the per-question
+     QR codes are the whole point, so they must survive. */
+  img { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .trace { font-family: "Courier New", monospace; letter-spacing: .5px; }
   .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px;
             text-align: center; border-bottom: 2px solid #111; padding-bottom: 9px; }
@@ -286,15 +250,27 @@ const DOC_STYLE = `
   .qno { font-weight: 700; min-width: 30px; }
   .qtext { flex: 1; font-size: 13.5px; line-height: 1.5; }
   .marks { font-size: 11px; font-weight: 700; white-space: nowrap; }
-  .options { margin: 6px 0 0 36px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px 18px; }
+  /* The answer zone: answer area on the left, this question's QR parked in the
+     whitespace at its right. Identical frame for every question type, so a
+     hybrid paper needs no special casing. */
+  .qbody { display: flex; align-items: flex-start; gap: 6mm; margin: 6px 0 0 36px; }
+  .qans { flex: 1; min-width: 0; }
+  .qtag { flex: none; width: 18mm; text-align: center; }
+  .qtag img { display: block; width: 18mm; height: 18mm; }
+  .qtag span { display: block; margin-top: 1px; font-family: "Courier New", monospace;
+               font-size: 6.5pt; color: #444; letter-spacing: .4px; }
+  .options { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 18px; }
   .option { font-size: 12.5px; line-height: 1.5; }
-  .answer { margin: 10px 0 0 36px; border-bottom: 1px solid #555; width: 65%; height: 28px; }
-  .subjective { margin: 10px 0 0 36px; }
+  .answer { border-bottom: 1px solid #555; width: 65%; height: 28px; margin-top: 4px; }
+  .subjective { margin-top: 4px; }
   .line { border-bottom: 1px solid #aaa; height: 25px; }
   .footer { border-top: 1px solid #111; margin-top: 25px; padding-top: 6px;
             display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: #555; }
   @media print { body { padding: 0; } .question { page-break-inside: avoid; } }
-  @media (max-width: 850px) { .options { grid-template-columns: 1fr; } }`;
+  @media (max-width: 850px) {
+    .options { grid-template-columns: 1fr; }
+    .qbody { gap: 4mm; }
+  }`;
 
 function htmlDoc(title: string, body: string): string {
   return `<!doctype html>
@@ -310,42 +286,35 @@ function htmlDoc(title: string, body: string): string {
 }
 
 /**
- * Build a printable A4 question paper for a single copy: the signed header
- * QR plus the copy's trace code tiled across the page as a watermark, so a
- * photograph of any fragment identifies this exact copy.
+ * Build a printable A4 question paper for a single copy: the signed header QR,
+ * plus one QR per question printed beside that question's answer area, so a
+ * photograph of a single question identifies this exact copy and which
+ * question was in shot. `frameSvgs[n - 1]` belongs to question n.
  */
 export function buildPaperHtml(
   result: PrintResult,
   copy: PrintedCopy,
   qrSvgString: string,
-  frameSvgs?: string[] | null,
-  grid?: FrameGrid
+  frameSvgs?: string[] | null
 ): string {
   const set = result.paper.set_label ? ` (${result.paper.set_label})` : '';
   return htmlDoc(
     `${result.paper.title}${set} — Copy #${copy.copy_number}`,
-    copySection(result, copy, qrSvgString, frameSvgs ?? null, grid ?? result.frameGrid)
+    copySection(result, copy, qrSvgString, frameSvgs ?? null)
   );
 }
 
 /**
  * Build ONE document containing every copy, each on its own page(s) with its
- * own signed QR and its own watermark. `copies` pairs each printed copy with
- * its pre-rendered SVGs.
- *
- * Note the watermark layer is `position: fixed`, so in a multi-copy document
- * each copy still gets its own — browsers scope a fixed layer to the page
- * box it is painted on.
+ * own signed header QR and its own per-question QRs. `copies` pairs each
+ * printed copy with its pre-rendered SVGs.
  */
 export function buildAllCopiesHtml(
   result: PrintResult,
-  copies: { copy: PrintedCopy; qrSvg: string; frameSvgs?: string[] | null }[],
-  grid?: FrameGrid
+  copies: { copy: PrintedCopy; qrSvg: string; frameSvgs?: string[] | null }[]
 ): string {
   const body = copies
-    .map(({ copy, qrSvg, frameSvgs }) =>
-      copySection(result, copy, qrSvg, frameSvgs ?? null, grid ?? result.frameGrid)
-    )
+    .map(({ copy, qrSvg, frameSvgs }) => copySection(result, copy, qrSvg, frameSvgs ?? null))
     .join('');
   const set = result.paper.set_label ? ` (${result.paper.set_label})` : '';
   return htmlDoc(`${result.paper.title}${set} — ${copies.length} copies`, body);

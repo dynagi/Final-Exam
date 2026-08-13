@@ -20,17 +20,20 @@ export async function qrSvg(
 }
 
 /**
- * One watermark frame: a server-minted token encoding (copy, page, frame).
+ * One question's QR: a server-minted token encoding (copy, page, question).
  *
- * Highest error correction (H, ~30% recoverable) because these are printed
- * faintly and will be photographed at an angle, folded, or partly covered by
- * text — the redundancy is what makes a fragment still decode.
+ * Error correction Q (~25% recoverable) rather than H. The token is 25
+ * alphanumeric characters, which Q fits into a 25x25 symbol where H would
+ * need 29x29 — at the ~18 mm these print at, that is the difference between
+ * roughly 0.72 mm and 0.62 mm per module. These are printed at full contrast
+ * in the paper's own whitespace rather than faintly under the text, so the
+ * larger modules buy more real-world scannability than H's extra redundancy.
  */
 export function frameQrSvg(token: string): Promise<string> {
-  return qrSvg(token, 300, { margin: 2, errorCorrectionLevel: 'H' });
+  return qrSvg(token, 240, { margin: 1, errorCorrectionLevel: 'Q' });
 }
 
-/** Every frame of one copy's page, rendered in the order the grid expects. */
+/** One QR per question, aligned so `[n - 1]` belongs to question n. */
 export function frameQrSvgs(tokens: string[]): Promise<string[]> {
   return Promise.all(tokens.map(frameQrSvg));
 }

@@ -3,7 +3,7 @@
  *
  * PostgREST caps every response at a server-side `max-rows` (1000 on
  * Supabase) and returns the truncated page silently — no error, no flag. A
- * question bank is explicitly unbounded in this app, so any screen that
+ * question bank runs to thousands of rows in this app, so any screen that
  * renders the whole bank has to page through it instead of firing one
  * request and hoping.
  */

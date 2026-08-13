@@ -95,7 +95,7 @@ export default function ComposePaperScreen() {
   const enforced = !!format?.enforced;
 
   /**
-   * The whole bank for this exam — unlimited, so it is paged rather than
+   * The whole bank for this exam — large, so it is paged rather than
    * fetched in one shot (a single request stops at PostgREST's max-rows and
    * would hide questions from the setter without saying so).
    */
@@ -656,7 +656,7 @@ export default function ComposePaperScreen() {
             <Empty
               icon="library-outline"
               title="Nothing in the bank yet"
-              text="No questions for this exam and subject. Teachers' uploads appear here as they arrive — the bank is unlimited."
+              text="No questions for this exam and subject. Teachers' uploads appear here as they arrive."
               palette={p}
             />
           ) : (

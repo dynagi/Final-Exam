@@ -31,7 +31,7 @@ import {
   useArchivePalette,
   useReducedMotion,
 } from '../../components/ArchiveBook';
-import { AnimatedPencilPaperModal, BookButton, CenteredHeading, Seal } from '../../components/ArchiveControls';
+import { BookButton, CenteredHeading, Seal } from '../../components/ArchiveControls';
 import {
   Badge,
   EmptyState,
@@ -52,7 +52,15 @@ import {
 } from '../../lib/examFormats';
 import { supabase } from '../../lib/supabase';
 import { serif } from '../../lib/theme';
-import { Exam, ExamSlot, paperSetLabels, Paper, Profile, TeacherSubject } from '../../lib/types';
+import {
+  Exam,
+  ExamSlot,
+  paperSetLabels,
+  Paper,
+  Profile,
+  QuestionType,
+  TeacherSubject,
+} from '../../lib/types';
 import { useAdminIndex } from './useAdminIndex';
 
 const SELF = 'Exams';
@@ -63,10 +71,24 @@ type SlotDraft = { start: string; end: string };
 type CustomSection = {
   name: string;
   subject: string;
+  question_type: QuestionType;
   count: string;
   marks_correct: string;
   negative_marks: string;
 };
+
+/**
+ * The answer style a section takes. This is what decides which questions
+ * teachers may bank against it — a section built as 'theoretical' is the only
+ * way a subjective question can ever enter the bank, since the published
+ * format catalogue defines objective quotas only.
+ */
+const SECTION_TYPES: { key: QuestionType; label: string }[] = [
+  { key: 'mcq', label: 'MCQ' },
+  { key: 'msq', label: 'MSQ' },
+  { key: 'numerical', label: 'Numerical' },
+  { key: 'theoretical', label: 'Subjective' },
+];
 
 const DEFAULT_SLOTS: SlotDraft[] = [
   { start: '09:00', end: '12:00' },
@@ -188,6 +210,9 @@ export default function ExamsScreen() {
           : resolved.sections.map((s) => ({
               name: s.name,
               subject: s.subject,
+              // Seed from whatever the reference already implies for the
+              // section, so the Admin only changes it when they mean to.
+              question_type: (s.requirements?.[0]?.types?.[0] ?? 'mcq') as QuestionType,
               count: '25',
               marks_correct: '1',
               negative_marks: '0',
@@ -315,7 +340,7 @@ export default function ExamsScreen() {
           : customSections.map((s) => ({
               name: s.name,
               subject: s.subject,
-              question_type: 'mcq' as const,
+              question_type: s.question_type,
               count: parseInt(s.count, 10),
               marks_correct: Number(s.marks_correct),
               negative_marks: Number(s.negative_marks) || 0,
@@ -657,99 +682,28 @@ export default function ExamsScreen() {
       />
 
       {/* ---------------------------- paper sets ----------------------------- */}
-      <AnimatedPencilPaperModal
+      <PaperSetsModal
         visible={!!setsTarget}
-        title={`Paper Sets · ${setsTarget?.name ?? ''}`}
+        exam={setsTarget}
+        setsDraft={setsDraft}
+        onSetsDraft={setSetsDraft}
+        reuseDraft={reuseDraft}
+        onReuseDraft={setReuseDraft}
+        saving={savingSets}
+        onSave={() => void saveSets()}
         onClose={() => setSetsTarget(null)}
-      >
-        <Text style={styles.assignBlurb}>
-          Every set is an independent paper: the setter picks its own questions and each set must
-          satisfy the exam format on its own. Sets can be added or removed at any time until their
-          paper is sealed.
-        </Text>
-        <Stepper
-          label="Number of paper sets"
-          value={setsDraft}
-          onChange={setSetsDraft}
-          min={1}
-          max={26}
-          suffix={setsDraft === 1 ? 'set' : 'sets'}
-        />
-        <View style={styles.setChips}>
-          {paperSetLabels(setsDraft).map((label) => (
-            <View key={label} style={styles.setChip}>
-              <Text style={styles.setChipText}>{label}</Text>
-            </View>
-          ))}
-        </View>
-        {setsTarget && setsDraft < setsTarget.paper_set_count ? (
-          <Text style={styles.provisional}>
-            ⚠ Reducing to {setsDraft} removes{' '}
-            {paperSetLabels(setsTarget.paper_set_count)
-              .slice(setsDraft)
-              .join(', ')}
-            . Any unsealed selection in those sets is discarded; sealed sets cannot be removed.
-          </Text>
-        ) : null}
-        <Toggle
-          label="Allow question reuse across sets"
-          value={reuseDraft}
-          onChange={setReuseDraft}
-          hint={
-            reuseDraft
-              ? 'A question may appear in more than one set.'
-              : 'Off — every set must use different questions.'
-          }
-        />
-        <BookButton
-          title="Save paper sets"
-          variant="gold"
-          loading={savingSets}
-          onPress={() => void saveSets()}
-        />
-        <View style={{ height: 8 }} />
-        <BookButton title="Cancel" onPress={() => setSetsTarget(null)} />
-      </AnimatedPencilPaperModal>
+      />
 
       {/* -------------------------- subject assignment ----------------------- */}
-      <AnimatedPencilPaperModal
+      <AssignSubjectsModal
         visible={!!assignTarget}
-        title={`Subjects · ${assignTarget?.name ?? ''}`}
+        exam={assignTarget}
+        teachers={teachers}
+        assignments={assignments}
+        subjects={assignSubjects}
+        onToggle={(teacherId, subject) => void toggleAssignment(teacherId, subject)}
         onClose={() => setAssignTarget(null)}
-      >
-        <Text style={styles.assignBlurb}>
-          A teacher with no subject selected here may write for every subject in the format.
-          Select subjects to restrict them.
-        </Text>
-        {teachers.length === 0 ? (
-          <Text style={styles.noPapers}>No teacher accounts yet.</Text>
-        ) : (
-          teachers.map((teacher) => (
-            <View key={teacher.id} style={styles.assignRow}>
-              <Text style={styles.assignName}>{teacher.full_name}</Text>
-              <View style={styles.assignChips}>
-                {assignSubjects.map((subject) => {
-                  const on = assignments.some(
-                    (a) => a.teacher_id === teacher.id && a.subject === subject
-                  );
-                  return (
-                    <Pressable
-                      key={subject}
-                      onPress={() => void toggleAssignment(teacher.id, subject)}
-                      style={[styles.assignChip, on && styles.assignChipOn]}
-                    >
-                      <Text style={[styles.assignChipText, on && { color: p.gold }]}>
-                        {subject}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          ))
-        )}
-        <BookButton title="Done" variant="gold" onPress={() => setAssignTarget(null)} />
-      </AnimatedPencilPaperModal>
+      />
     </View>
   );
 }
@@ -784,6 +738,655 @@ function ActionButton({
     </Pressable>
   );
 }
+
+/* ------------------------- premium exam management modals ------------------ */
+
+/**
+ * A separate, fixed "premium examination platform" palette for just the
+ * Manage Paper Sets / Assign Subjects popups — ivory, burgundy, muted gold —
+ * distinct from the rest of the vintage archive theme, per spec.
+ */
+const PREMIUM = {
+  bg: '#FBF6EC',
+  card: '#FFFFFF',
+  cardAlt: '#FAF3E7',
+  burgundy: '#7A1F2B',
+  burgundyDark: '#5C1620',
+  gold: '#B8925A',
+  text: '#2E2621',
+  textDim: '#6B5D52',
+  textFaint: '#9C8F80',
+  border: '#E7DCC9',
+  cream: '#FBF6EC',
+};
+
+function PremiumModal({
+  visible,
+  onClose,
+  width = 560,
+  children,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  const reduced = useReducedMotion();
+  const { width: winWidth } = useWindowDimensions();
+  const t = useRef(new Animated.Value(0)).current;
+  const [mounted, setMounted] = useState(visible);
+
+  useEffect(() => {
+    if (visible) setMounted(true);
+    if (reduced) {
+      t.setValue(visible ? 1 : 0);
+      if (!visible) setMounted(false);
+      return;
+    }
+    Animated.timing(t, {
+      toValue: visible ? 1 : 0,
+      duration: visible ? 320 : 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      if (!visible) setMounted(false);
+    });
+  }, [visible, t, reduced]);
+
+  const scale = t.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
+  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
+  const sheetWidth = Math.min(winWidth - 40, width);
+
+  return (
+    <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
+      <Animated.View style={[StyleSheet.absoluteFill, premiumStyles.scrim, { opacity: t }]}>
+        <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close" onPress={onClose} />
+      </Animated.View>
+      <View style={premiumStyles.center} pointerEvents="box-none">
+        <Animated.View
+          style={[
+            premiumStyles.sheet,
+            { width: sheetWidth, opacity: t, transform: [{ scale }, { translateY }] },
+          ]}
+        >
+          {children}
+        </Animated.View>
+      </View>
+    </Modal>
+  );
+}
+
+/** Decorative only — lead on the left, eraser on the right. */
+function PencilBadge({ label }: { label: string }) {
+  const w = 220;
+  const h = 16;
+  return (
+    <View style={premiumStyles.pencilBadgeWrap}>
+      <View style={[premiumStyles.pencilRow, { width: w, height: h }]}>
+        <View
+          style={{
+            width: 0,
+            height: 0,
+            borderTopWidth: h / 2,
+            borderBottomWidth: h / 2,
+            borderRightWidth: h * 0.34,
+            borderTopColor: 'transparent',
+            borderBottomColor: 'transparent',
+            borderRightColor: '#2B2620',
+          }}
+        />
+        <View
+          style={{
+            width: 0,
+            height: 0,
+            borderTopWidth: h / 2,
+            borderBottomWidth: h / 2,
+            borderRightWidth: h * 0.9,
+            borderTopColor: 'transparent',
+            borderBottomColor: 'transparent',
+            borderRightColor: '#D8C39A',
+          }}
+        />
+        <View style={[premiumStyles.pencilWood, { flex: 2, height: h }]} />
+        <View style={[premiumStyles.pencilBand, { flex: 0.3, height: h }]} />
+        <View style={[premiumStyles.pencilBarrel, { flex: 4.4, height: h * 1.15 }]}>
+          <Text style={premiumStyles.pencilBarrelText} numberOfLines={1}>
+            {label}
+          </Text>
+        </View>
+        <View style={[premiumStyles.pencilBand, { flex: 0.3, height: h }]} />
+        <View style={[premiumStyles.pencilWood, { flex: 2, height: h }]} />
+        <View style={[premiumStyles.pencilFerrule, { flex: 0.8, height: h * 0.86 }]} />
+        <View style={[premiumStyles.pencilEraser, { flex: 1.1, height: h, borderRadius: h / 2 }]} />
+      </View>
+    </View>
+  );
+}
+
+function PremiumSwitch({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      onPress={() => onChange(!value)}
+      style={[premiumStyles.switchTrack, value && premiumStyles.switchTrackOn]}
+    >
+      <View style={[premiumStyles.switchThumb, value && premiumStyles.switchThumbOn]} />
+    </Pressable>
+  );
+}
+
+function PaperSetsModal({
+  visible,
+  exam,
+  setsDraft,
+  onSetsDraft,
+  reuseDraft,
+  onReuseDraft,
+  saving,
+  onSave,
+  onClose,
+}: {
+  visible: boolean;
+  exam: ExamWithPaper | null;
+  setsDraft: number;
+  onSetsDraft: (n: number) => void;
+  reuseDraft: boolean;
+  onReuseDraft: (v: boolean) => void;
+  saving: boolean;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const labels = paperSetLabels(setsDraft);
+  const [highlighted, setHighlighted] = useState<string | null>(labels[0] ?? null);
+
+  useEffect(() => {
+    if (!highlighted || !labels.includes(highlighted)) setHighlighted(labels[0] ?? null);
+    // Re-derive only when the set count itself changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setsDraft]);
+
+  return (
+    <PremiumModal visible={visible} onClose={onClose} width={560}>
+      <PencilBadge label="PAPER SETS" />
+      <Text style={premiumStyles.title}>Paper Sets · {exam?.name ?? ''}</Text>
+      <Text style={premiumStyles.subtitle}>
+        Every set is an independent paper: the setter picks its own questions and each set must
+        satisfy the exam format on its own. Sets can be added or removed at any time until their
+        paper is sealed.
+      </Text>
+
+      <ScrollView style={premiumStyles.scroll} showsVerticalScrollIndicator={false}>
+        <View style={premiumStyles.card}>
+          <Text style={premiumStyles.cardLabel}>Number of paper sets</Text>
+          <View style={premiumStyles.stepperRow}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Decrease number of paper sets"
+              disabled={setsDraft <= 1}
+              onPress={() => onSetsDraft(Math.max(1, setsDraft - 1))}
+              style={[premiumStyles.stepperBtn, setsDraft <= 1 && premiumStyles.stepperBtnOff]}
+            >
+              <Ionicons name="remove" size={18} color={PREMIUM.burgundy} />
+            </Pressable>
+            <View style={premiumStyles.stepperValueWrap}>
+              <Text style={premiumStyles.stepperValue}>{setsDraft}</Text>
+              <Text style={premiumStyles.stepperSuffix}>{setsDraft === 1 ? 'set' : 'sets'}</Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Increase number of paper sets"
+              disabled={setsDraft >= 26}
+              onPress={() => onSetsDraft(Math.min(26, setsDraft + 1))}
+              style={[premiumStyles.stepperBtn, setsDraft >= 26 && premiumStyles.stepperBtnOff]}
+            >
+              <Ionicons name="add" size={18} color={PREMIUM.burgundy} />
+            </Pressable>
+          </View>
+          {exam && setsDraft < exam.paper_set_count ? (
+            <Text style={premiumStyles.warning}>
+              ⚠ Reducing to {setsDraft} removes{' '}
+              {paperSetLabels(exam.paper_set_count).slice(setsDraft).join(', ')}. Any unsealed
+              selection in those sets is discarded; sealed sets cannot be removed.
+            </Text>
+          ) : null}
+        </View>
+
+        <Text style={premiumStyles.sectionLabel}>Manage sets</Text>
+        <View style={premiumStyles.setGrid}>
+          {labels.map((label) => {
+            const active = label === highlighted;
+            return (
+              <Pressable
+                key={label}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => setHighlighted(label)}
+                style={[premiumStyles.setCard, active && premiumStyles.setCardActive]}
+              >
+                <Ionicons
+                  name="document-text-outline"
+                  size={16}
+                  color={active ? PREMIUM.burgundy : PREMIUM.textDim}
+                />
+                <Text style={[premiumStyles.setCardText, active && premiumStyles.setCardTextActive]}>
+                  {label}
+                </Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={15}
+                  color={active ? PREMIUM.burgundy : PREMIUM.textFaint}
+                />
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View style={premiumStyles.toggleCard}>
+          <View style={premiumStyles.flex}>
+            <Text style={premiumStyles.cardLabel}>Allow question reuse across sets</Text>
+            <Text style={premiumStyles.cardHint}>
+              {reuseDraft
+                ? 'A question may appear in more than one set.'
+                : 'Off — every set must use different questions.'}
+            </Text>
+          </View>
+          <PremiumSwitch value={reuseDraft} onChange={onReuseDraft} />
+        </View>
+
+        <View style={premiumStyles.summaryCard}>
+          <Text style={premiumStyles.summaryLabel}>Summary</Text>
+          <Text style={premiumStyles.summaryText}>
+            You have created {setsDraft} paper set{setsDraft === 1 ? '' : 's'}: {labels.join(', ')}
+          </Text>
+        </View>
+      </ScrollView>
+
+      <View style={premiumStyles.actions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={onClose} style={premiumStyles.cancelBtn}>
+          <Text style={premiumStyles.cancelBtnText}>Cancel</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Save Changes"
+          accessibilityState={{ disabled: saving }}
+          disabled={saving}
+          onPress={onSave}
+          style={[premiumStyles.saveBtn, saving && { opacity: 0.6 }]}
+        >
+          <Text style={premiumStyles.saveBtnText}>{saving ? 'Saving…' : 'Save Changes'}</Text>
+        </Pressable>
+      </View>
+    </PremiumModal>
+  );
+}
+
+function AssignSubjectsModal({
+  visible,
+  exam,
+  teachers,
+  assignments,
+  subjects,
+  onToggle,
+  onClose,
+}: {
+  visible: boolean;
+  exam: ExamWithPaper | null;
+  teachers: Profile[];
+  assignments: TeacherSubject[];
+  subjects: string[];
+  onToggle: (teacherId: string, subject: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [selectedTeacherId, setSelectedTeacherId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!visible) return;
+    setSelectedTeacherId(teachers[0]?.id ?? null);
+    setQuery('');
+    // Re-seed only when the popup opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const filteredTeachers = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return teachers;
+    return teachers.filter(
+      (t) =>
+        t.full_name.toLowerCase().includes(q) ||
+        assignments.some((a) => a.teacher_id === t.id && a.subject.toLowerCase().includes(q))
+    );
+  }, [teachers, assignments, query]);
+
+  const selected = teachers.find((t) => t.id === selectedTeacherId) ?? null;
+  const countFor = (teacherId: string) => assignments.filter((a) => a.teacher_id === teacherId).length;
+  const subjectsFor = (teacherId: string) =>
+    assignments.filter((a) => a.teacher_id === teacherId).map((a) => a.subject);
+
+  return (
+    <PremiumModal visible={visible} onClose={onClose} width={700}>
+      <Text style={premiumStyles.title}>Assign Subjects to Teachers</Text>
+      <Text style={premiumStyles.subtitle}>
+        Assign teachers to the subjects they are responsible for in {exam?.name ?? 'this examination'}.
+      </Text>
+
+      <View style={premiumStyles.searchBar}>
+        <Ionicons name="search" size={15} color={PREMIUM.textFaint} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search teachers or subjects…"
+          placeholderTextColor={PREMIUM.textFaint}
+          autoCapitalize="none"
+          style={premiumStyles.searchInput}
+        />
+      </View>
+
+      {teachers.length === 0 ? (
+        <Text style={premiumStyles.emptyText}>No teacher accounts yet.</Text>
+      ) : (
+        <View style={premiumStyles.splitRow}>
+          <ScrollView style={premiumStyles.teacherCol} showsVerticalScrollIndicator={false}>
+            {filteredTeachers.map((teacher) => {
+              const active = teacher.id === selectedTeacherId;
+              return (
+                <Pressable
+                  key={teacher.id}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: active }}
+                  onPress={() => setSelectedTeacherId(teacher.id)}
+                  style={[premiumStyles.teacherCard, active && premiumStyles.teacherCardActive]}
+                >
+                  <View style={premiumStyles.avatar}>
+                    <Text style={premiumStyles.avatarText}>{teacher.full_name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={premiumStyles.flex}>
+                    <Text style={premiumStyles.teacherName} numberOfLines={1}>
+                      {teacher.full_name}
+                    </Text>
+                    <Text style={premiumStyles.teacherMeta}>ID #{teacher.id.slice(0, 8).toUpperCase()}</Text>
+                    <Text style={premiumStyles.teacherMeta}>
+                      {countFor(teacher.id)} subject{countFor(teacher.id) === 1 ? '' : 's'} assigned
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name="chevron-forward"
+                    size={15}
+                    color={active ? PREMIUM.burgundy : PREMIUM.textFaint}
+                  />
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+
+          <View style={premiumStyles.subjectCol}>
+            <Text style={premiumStyles.sectionLabel}>Subjects</Text>
+            {selected ? (
+              <View style={premiumStyles.chipGrid}>
+                {subjects.map((subject) => {
+                  const on = assignments.some(
+                    (a) => a.teacher_id === selected.id && a.subject === subject
+                  );
+                  return (
+                    <Pressable
+                      key={subject}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: on }}
+                      onPress={() => onToggle(selected.id, subject)}
+                      style={[premiumStyles.subjectChip, on && premiumStyles.subjectChipOn]}
+                    >
+                      <Text style={[premiumStyles.subjectChipText, on && premiumStyles.subjectChipTextOn]}>
+                        {subject}
+                      </Text>
+                      {on ? <Ionicons name="checkmark" size={13} color={PREMIUM.cream} /> : null}
+                    </Pressable>
+                  );
+                })}
+              </View>
+            ) : (
+              <Text style={premiumStyles.emptyText}>Select a teacher to assign subjects.</Text>
+            )}
+
+            {selected ? (
+              <View style={premiumStyles.summaryCard}>
+                <Text style={premiumStyles.summaryLabel}>Current assignment</Text>
+                <Text style={premiumStyles.summaryText}>{selected.full_name}</Text>
+                <Text style={premiumStyles.summaryTextDim}>
+                  {subjectsFor(selected.id).length
+                    ? subjectsFor(selected.id).join(' · ')
+                    : 'No subjects assigned — may write for every subject.'}
+                </Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      )}
+
+      <View style={premiumStyles.actions}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={onClose} style={premiumStyles.cancelBtn}>
+          <Text style={premiumStyles.cancelBtnText}>Cancel</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Save Changes" onPress={onClose} style={premiumStyles.saveBtn}>
+          <Text style={premiumStyles.saveBtnText}>Save Changes</Text>
+        </Pressable>
+      </View>
+    </PremiumModal>
+  );
+}
+
+const premiumStyles = StyleSheet.create({
+  flex: { flex: 1 },
+  scrim: { backgroundColor: 'rgba(30,20,14,0.5)' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  sheet: {
+    maxHeight: '88%',
+    backgroundColor: PREMIUM.bg,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    paddingTop: 22,
+    paddingBottom: 18,
+    paddingHorizontal: 24,
+    shadowColor: '#3A2A1E',
+    shadowOffset: { width: 0, height: 20 },
+    shadowOpacity: 0.22,
+    shadowRadius: 34,
+    elevation: 18,
+  },
+  pencilBadgeWrap: { alignItems: 'center', marginBottom: 10 },
+  pencilRow: { flexDirection: 'row', alignItems: 'center' },
+  pencilWood: { backgroundColor: '#A6432E' },
+  pencilBand: { backgroundColor: PREMIUM.gold },
+  pencilBarrel: {
+    backgroundColor: PREMIUM.burgundy,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 2,
+  },
+  pencilBarrelText: { fontSize: 7.5, fontWeight: '800', letterSpacing: 1, color: PREMIUM.cream },
+  pencilFerrule: { backgroundColor: '#9A9994' },
+  pencilEraser: { backgroundColor: '#D98A8A' },
+
+  title: { fontSize: 19, fontWeight: '800', color: PREMIUM.text, textAlign: 'center', letterSpacing: 0.2 },
+  subtitle: {
+    fontSize: 12.5,
+    lineHeight: 18,
+    color: PREMIUM.textDim,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 16,
+  },
+  scroll: { flexGrow: 0 },
+
+  card: {
+    backgroundColor: PREMIUM.card,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+    shadowColor: '#3A2A1E',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    elevation: 2,
+  },
+  cardLabel: { fontSize: 13, fontWeight: '700', color: PREMIUM.text },
+  cardHint: { fontSize: 11.5, color: PREMIUM.textDim, marginTop: 3, lineHeight: 16 },
+  stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, marginTop: 12 },
+  stepperBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: PREMIUM.burgundy,
+    backgroundColor: `${PREMIUM.burgundy}12`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepperBtnOff: { opacity: 0.35 },
+  stepperValueWrap: { alignItems: 'center', minWidth: 70 },
+  stepperValue: { fontSize: 26, fontWeight: '800', color: PREMIUM.text, fontVariant: ['tabular-nums'] },
+  stepperSuffix: { fontSize: 11, color: PREMIUM.textDim, marginTop: -2 },
+  warning: { fontSize: 11.5, color: PREMIUM.burgundy, marginTop: 12, lineHeight: 16 },
+
+  sectionLabel: { fontSize: 12.5, fontWeight: '700', color: PREMIUM.text, marginBottom: 10 },
+  setGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
+  setCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexGrow: 1,
+    minWidth: 140,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    backgroundColor: PREMIUM.card,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  setCardActive: { borderColor: PREMIUM.gold, backgroundColor: `${PREMIUM.gold}18` },
+  setCardText: { flex: 1, fontSize: 13, fontWeight: '700', color: PREMIUM.textDim },
+  setCardTextActive: { color: PREMIUM.burgundy },
+
+  toggleCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    backgroundColor: PREMIUM.card,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 16,
+  },
+  switchTrack: {
+    width: 46,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: '#DCD0BE',
+    padding: 3,
+  },
+  switchTrackOn: { backgroundColor: PREMIUM.burgundy },
+  switchThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF' },
+  switchThumbOn: { transform: [{ translateX: 20 }] },
+
+  summaryCard: {
+    backgroundColor: PREMIUM.cardAlt,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 4,
+  },
+  summaryLabel: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1, color: PREMIUM.gold, marginBottom: 6 },
+  summaryText: { fontSize: 13, fontWeight: '700', color: PREMIUM.text, lineHeight: 19 },
+  summaryTextDim: { fontSize: 12, color: PREMIUM.textDim, marginTop: 3, lineHeight: 17 },
+
+  actions: { flexDirection: 'row', gap: 12, marginTop: 18 },
+  cancelBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 13,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    backgroundColor: PREMIUM.card,
+  },
+  cancelBtnText: { fontSize: 13.5, fontWeight: '700', color: PREMIUM.textDim },
+  saveBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 13,
+    borderRadius: 14,
+    backgroundColor: PREMIUM.burgundy,
+    shadowColor: PREMIUM.burgundyDark,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28,
+    shadowRadius: 10,
+    elevation: 3,
+  },
+  saveBtnText: { fontSize: 13.5, fontWeight: '800', color: PREMIUM.cream },
+
+  searchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: PREMIUM.card,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    marginBottom: 16,
+  },
+  searchInput: { flex: 1, fontSize: 13, color: PREMIUM.text },
+  emptyText: { fontSize: 12.5, color: PREMIUM.textDim, fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
+
+  splitRow: { flexDirection: 'row', gap: 16, flexShrink: 1 },
+  teacherCol: { flex: 1, maxHeight: 380 },
+  teacherCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    backgroundColor: PREMIUM.card,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 8,
+  },
+  teacherCardActive: { borderColor: PREMIUM.gold, backgroundColor: `${PREMIUM.gold}18` },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: `${PREMIUM.burgundy}1A`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { fontSize: 13, fontWeight: '800', color: PREMIUM.burgundy },
+  teacherName: { fontSize: 12.5, fontWeight: '700', color: PREMIUM.text },
+  teacherMeta: { fontSize: 10, color: PREMIUM.textFaint, marginTop: 1 },
+
+  subjectCol: { flex: 1, maxHeight: 380 },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
+  subjectChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderColor: PREMIUM.border,
+    backgroundColor: PREMIUM.card,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 8,
+  },
+  subjectChipOn: { borderColor: PREMIUM.burgundy, backgroundColor: PREMIUM.burgundy },
+  subjectChipText: { fontSize: 12, fontWeight: '600', color: PREMIUM.textDim },
+  subjectChipTextOn: { color: PREMIUM.cream, fontWeight: '700' },
+});
 
 /* ------------------------------ notice board ------------------------------- */
 
@@ -958,6 +1561,30 @@ function NoticeBoard({
                   {customSections.map((s, i) => (
                     <View key={s.name} style={ncStyles.customRow}>
                       <Text style={ncStyles.customName}>{s.name}</Text>
+                      <View style={ncStyles.typeRow}>
+                        {SECTION_TYPES.map((t) => {
+                          const on = s.question_type === t.key;
+                          return (
+                            <Pressable
+                              key={t.key}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: on }}
+                              onPress={() =>
+                                onCustomSections((prev) =>
+                                  prev.map((r, idx) =>
+                                    idx === i ? { ...r, question_type: t.key } : r
+                                  )
+                                )
+                              }
+                              style={[ncStyles.typeChip, on && ncStyles.typeChipOn]}
+                            >
+                              <Text style={[ncStyles.typeChipText, on && ncStyles.typeChipTextOn]}>
+                                {t.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
                       <View style={ncStyles.customInputs}>
                         <View style={ncStyles.customField}>
                           <Input
@@ -1275,7 +1902,9 @@ function categoryIcon(cat: string): keyof typeof Ionicons.glyphMap {
   if (k.includes('medic') || k.includes('health')) return 'medkit-outline';
   if (k.includes('manage')) return 'briefcase-outline';
   if (k.includes('govern') || k.includes('civil') || k.includes('admin')) return 'shield-outline';
-  if (k.includes('teach') || k.includes('educat')) return 'school-outline';
+  if (k.includes('school') || k.includes('board') || k.includes('teach') || k.includes('educat')) {
+    return 'school-outline';
+  }
   if (k.includes('law')) return 'hammer-outline';
   return 'ribbon-outline';
 }
@@ -1602,6 +2231,17 @@ const ncStyles = StyleSheet.create({
   customName: { fontFamily: serif, fontSize: 12, fontWeight: '700', color: '#2A2410', marginBottom: 4 },
   customInputs: { flexDirection: 'row', gap: 8 },
   customField: { flex: 1 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  typeChip: {
+    borderWidth: 1,
+    borderColor: '#B8A85F',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  typeChipOn: { backgroundColor: '#7A1F2B', borderColor: '#7A1F2B' },
+  typeChipText: { fontFamily: serif, fontSize: 10.5, fontWeight: '700', color: '#5A5030' },
+  typeChipTextOn: { color: '#F3E9C9' },
   setChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8, marginBottom: 4 },
   setChip: { borderWidth: 1, borderColor: '#B8A85F', borderRadius: 3, paddingHorizontal: 9, paddingVertical: 4 },
   setChipText: { fontFamily: serif, fontSize: 11, fontWeight: '700', color: '#4A421F' },
@@ -1731,34 +2371,4 @@ const makeStyles = (p: ArchivePalette) =>
       paddingVertical: 6,
     },
     actionBtnText: { fontFamily: serif, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
-
-    setChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 8 },
-    setChip: {
-      borderWidth: 1,
-      borderColor: p.rule,
-      borderRadius: 3,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      backgroundColor: p.pageShade,
-    },
-    setChipText: { fontFamily: serif, color: p.ink, fontSize: 12, fontWeight: '700' },
-    assignBlurb: { fontFamily: serif, color: p.inkDim, fontSize: 12, lineHeight: 18, marginBottom: 12 },
-    assignRow: {
-      borderTopWidth: 1,
-      borderTopColor: p.rule,
-      paddingTop: 12,
-      marginBottom: 8,
-    },
-    assignName: { fontFamily: serif, color: p.ink, fontSize: 14, fontWeight: '700', marginBottom: 6 },
-    assignChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-    assignChip: {
-      borderWidth: 1,
-      borderColor: p.rule,
-      borderRadius: 999,
-      paddingHorizontal: 12,
-      paddingVertical: 6,
-      backgroundColor: p.pageShade,
-    },
-    assignChipOn: { borderColor: p.gold, backgroundColor: p.goldSoft },
-    assignChipText: { fontFamily: serif, color: p.inkDim, fontSize: 12, fontWeight: '700' },
   });

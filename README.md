@@ -38,9 +38,9 @@ npm start                  # -> listening on http://0.0.0.0:4000
 ```
 
 > Optional: set `DETECTOR_KEY` in `server/.env` to let an unattended monitoring
-> client post watermark sightings with an `x-detector-key` header instead of a
+> client post QR sightings with an `x-detector-key` header instead of a
 > user session. `DETECTION_DEDUP_SEC` (default 120) is how long repeat sightings
-> of the same frame by the same scanner fold into one event.
+> of the same code by the same scanner fold into one event.
 >
 > This service owns the examination format catalogue
 > ([`server/src/examFormats.js`](server/src/examFormats.js)) and enforces it. Scheduling an
@@ -113,7 +113,7 @@ Create three accounts from the app's **Create account** screen (use the role tab
 Then run the lifecycle — ideally with two devices/emulators side by side to see the realtime updates:
 
 1. **Admin** → *Exams* → **Create Exam** → pick an **exam format and year** from the dropdown (e.g. *JEE Main — Paper 1 2026*, or its 2027 carry-forward). The predefined structure loads immediately — sections, subjects, questions per section, question types, marks per correct answer, negative marking, unattempted marks, total marks and duration. Set the **number of paper sets** (`4` → Set A, B, C, D) and whether questions may be reused across them (off by default). Confirm the name, date and 2–3 daily slots (slot lengths are pre-filled from the format's duration). **Manage paper sets** on the exam card raises or lowers the count later — sealed sets can never be dropped. Optionally use **Assign subjects to teachers** to restrict who may write for which subject. *(Teacher/Setter screens unlock live.)*
-2. **Teacher** → *Upload* tab. The **Subject dropdown comes from the selected exam format** (narrowed to your assigned subjects, if any). Picking a section quota fixes the question type and marks — you cannot change the format's marking scheme — but **the bank itself is unlimited**: write 25, 250 or 2 500 Physics questions. The meters show bank depth against what all the sets together need (`Physics · MCQ · 4 marks 63/80`). Two modes feed the same secure bank:
+2. **Teacher** → *Upload* tab. The **Subject dropdown comes from the selected exam format** (narrowed to your assigned subjects, if any). Picking a section quota fixes the question type and marks — you cannot change the format's marking scheme — and **each slot is capped at twice what the exam consumes** (`max per paper × paper sets × 2`), so there is room to choose between questions without the bank growing without bound. The meters show bank depth against what all the sets together need, plus that ceiling (`Physics · MCQ · 4 marks 63/80 · ceiling 160`); a full slot stops accepting uploads until someone withdraws one. Two modes feed the same secure bank:
    - **Type one** — write the question (MCQ, MSQ, numerical or subjective, per the format) and submit. *(Setter's bank updates live.)*
    - **Import PDF** — choose a PDF → the AI service runs NLP and returns structured questions → review, deselect any, and bulk-import into the chosen quota.
    *Withdraw* a question from *My Questions* to take one back out of the bank.

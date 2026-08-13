@@ -1,11 +1,11 @@
 /**
  * QR Detections — the security event feed, presented as a static open book.
  *
- * Every printed page is divided into a grid of frames, each carrying its own
- * HMAC-tagged QR. When a monitoring client (or an admin pasting a code)
- * reports a sighting, the server resolves it to an exact copy, page and
- * frame and records it here. Repeat sightings of the same frame by the same
- * scanner fold into one row's counter rather than flooding the feed.
+ * Every question on a printed copy carries its own HMAC-tagged QR. When a
+ * monitoring client (or an admin pasting a code) reports a sighting, the
+ * server resolves it to an exact copy, page and question and records it here.
+ * Repeat sightings of the same code by the same scanner fold into one row's
+ * counter rather than flooding the feed.
  */
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -66,7 +66,6 @@ export default function DetectionsScreen() {
   const [indexOpen, setIndexOpen] = useState(false);
 
   const [detections, setDetections] = useState<QrDetection[]>([]);
-  const [grid, setGrid] = useState({ cols: 5, rows: 7 });
   const [dedupWindow, setDedupWindow] = useState(120);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -78,7 +77,6 @@ export default function DetectionsScreen() {
     try {
       const res = await fetchDetections(100);
       setDetections(res.detections);
-      setGrid(res.grid);
       setDedupWindow(res.dedup_window_sec);
       setLoadError(null);
     } catch (e) {
@@ -135,7 +133,9 @@ export default function DetectionsScreen() {
         res.deduplicated ? 'Already recorded' : 'Security event raised',
         res.deduplicated
           ? `Counted against the existing event (${res.detection.detection_count} sightings within ${res.dedup_window_sec}s).`
-          : `Copy traced to page ${res.detection.page_number}, frame ${res.detection.frame_number}. A critical alert is on the dashboard.`
+          : `Copy traced to page ${res.detection.page_number}, ${
+              res.detection.frame_label ?? `frame ${res.detection.frame_number}`
+            }. A critical alert is on the dashboard.`
       );
       void load();
     } catch (e) {
@@ -166,9 +166,10 @@ export default function DetectionsScreen() {
       <Rule ornament gap={12} />
 
       <Text style={styles.intro}>
-        Each printed page carries a {grid.cols} × {grid.rows} grid of unique QR codes, so a
-        photograph of any part of a sheet identifies the copy, the page and the frame. Repeat
-        sightings of the same frame by the same scanner within {dedupWindow}s are counted once.
+        Every question carries its own unique QR code, printed beside its answer area, so a
+        photograph of even a single question identifies the copy, the page and the exact question.
+        Repeat sightings of the same code by the same scanner within {dedupWindow}s are counted
+        once.
       </Text>
 
       <Rule gap={16} />
@@ -230,8 +231,7 @@ export default function DetectionsScreen() {
                 {item.set_label ? ` · ${item.set_label}` : ''}
               </Text>
               <Text style={styles.locator}>
-                Page {item.page_number} · Frame {item.frame_number}
-                {item.frame_label ? ` (${item.frame_label})` : ''}
+                Page {item.page_number} · {item.frame_label ?? `Frame ${item.frame_number}`}
               </Text>
 
               <View style={styles.fields}>

@@ -598,6 +598,124 @@ const REFERENCE_ONLY = [
   ['icg-assistant-commandant', 'Indian Coast Guard — Assistant Commandant', 'Indian Coast Guard', 'Defence', 'Computer Based Test', ['General Awareness', 'English', 'Mathematics', 'Reasoning'], 'Stage structure varies by recruitment cycle; take the question and marking scheme from the current notification.'],
 ];
 
+/* ---------------------------- school board exams --------------------------- */
+
+/**
+ * Class 10 / 11 / 12 board examinations: the central boards, every state board
+ * and the UT arrangements.
+ *
+ * These are theory papers, and they are reference-only by nature rather than by
+ * omission. Unlike an entrance exam, a board republishes its blueprint every
+ * year — subject-wise marks, section counts, question counts and even duration
+ * move with the current sample/specimen paper, and they differ per subject
+ * inside the same examination. Pinning a quota here would be inventing one, so
+ * the Admin states the counts for the specific subject paper being set, exactly
+ * as for any other open format.
+ *
+ * Sections are the subjects a board commonly offers; a paper is set against the
+ * one it is for.
+ */
+const BOARD_SUBJECTS = {
+  10: ['English', 'Second Language', 'Mathematics', 'Science', 'Social Science'],
+  11: ['English', 'Physics', 'Chemistry', 'Mathematics', 'Biology', 'Accountancy', 'Business Studies', 'Economics'],
+  12: ['English', 'Physics', 'Chemistry', 'Mathematics', 'Biology', 'Accountancy', 'Business Studies', 'Economics', 'History', 'Political Science'],
+};
+
+/** What a board theory paper mixes, where the board publishes it specifically. */
+const BOARD_NOTES = {
+  'cbse-10': 'Commonly 80 theory marks with internal assessment making up the balance, usually 3 hours. Mixes MCQ, assertion–reason, short answer, long answer, case/source-based and competency-based questions. Take exact counts from the annual CBSE sample question paper.',
+  'cbse-12': 'Commonly 70 or 80 theory marks alongside practical/project work where prescribed, usually 3 hours. Mixes MCQ, assertion–reason, short answer, numerical, long answer, case-based and competency-based questions. Take exact counts from the annual CBSE sample question paper.',
+  'icse-10': 'Commonly 80 theory marks with internal/practical components where prescribed. Mixes objective, short answer, structured, long answer, diagram/map-based and application questions. Take the exact structure from the CISCE specimen paper.',
+  'isc-12': 'Commonly 70 or 80 theory marks alongside practical/project components where prescribed. Mixes objective, short answer, numerical, structured, long answer and application questions. Take the exact structure from the CISCE specimen paper.',
+};
+
+const BOARD_NOTE_DEFAULT =
+  'Theory paper mixing objective/MCQ, very short answer, short answer, long answer, numerical and application/case-based questions, with practical or internal assessment where prescribed. Subject-wise marks, duration and question counts vary by subject and academic year — take them from the board’s current blueprint.';
+
+/** [code, name, board, class] */
+const BOARD_EXAMS = [
+  ['cbse-10', 'CBSE Class 10 Secondary School Examination', 'Central Board of Secondary Education', 10],
+  ['cbse-12', 'CBSE Class 12 Senior School Certificate Examination', 'Central Board of Secondary Education', 12],
+  ['icse-10', 'ICSE (Indian Certificate of Secondary Education)', 'Council for the Indian School Certificate Examinations', 10],
+  ['isc-12', 'ISC (Indian School Certificate)', 'Council for the Indian School Certificate Examinations', 12],
+  ['nios-secondary', 'NIOS Secondary Examination', 'National Institute of Open Schooling', 10],
+  ['nios-senior-secondary', 'NIOS Senior Secondary Examination', 'National Institute of Open Schooling', 12],
+  ['ap-ssc', 'AP SSC Public Examination', 'Board of Secondary Education, Andhra Pradesh', 10],
+  ['ap-inter-1', 'AP Intermediate 1st Year Examination', 'Board of Intermediate Education, Andhra Pradesh', 11],
+  ['ap-inter-2', 'AP Intermediate 2nd Year Examination', 'Board of Intermediate Education, Andhra Pradesh', 12],
+  ['assam-hslc', 'Assam HSLC Examination', 'Board of Secondary Education, Assam', 10],
+  ['assam-hs', 'Assam Higher Secondary Examination', 'Assam Higher Secondary Education Council', 12],
+  ['bihar-matric', 'Bihar Matriculation Examination', 'Bihar School Examination Board', 10],
+  ['bihar-inter', 'Bihar Intermediate Examination', 'Bihar School Examination Board', 12],
+  ['cgbse-10', 'CGBSE High School Examination', 'Chhattisgarh Board of Secondary Education', 10],
+  ['cgbse-12', 'CGBSE Higher Secondary Examination', 'Chhattisgarh Board of Secondary Education', 12],
+  ['goa-10', 'Goa SSC Examination', 'Goa Board of Secondary and Higher Secondary Education', 10],
+  ['goa-12', 'Goa HSSC Examination', 'Goa Board of Secondary and Higher Secondary Education', 12],
+  ['gseb-10', 'GSEB SSC Examination', 'Gujarat Secondary and Higher Secondary Education Board', 10],
+  ['gseb-12', 'GSEB HSC General/Science Examination', 'Gujarat Secondary and Higher Secondary Education Board', 12],
+  ['haryana-10', 'Haryana Secondary Examination', 'Board of School Education Haryana', 10],
+  ['haryana-12', 'Haryana Senior Secondary Examination', 'Board of School Education Haryana', 12],
+  ['hp-10', 'HPBOSE Matriculation Examination', 'Himachal Pradesh Board of School Education', 10],
+  ['hp-12', 'HPBOSE Plus Two Examination', 'Himachal Pradesh Board of School Education', 12],
+  ['jkbose-10', 'JKBOSE Class 10 Secondary Examination', 'Jammu and Kashmir Board of School Education', 10],
+  ['jkbose-12', 'JKBOSE Class 12 Higher Secondary Examination', 'Jammu and Kashmir Board of School Education', 12],
+  ['jac-10', 'JAC Secondary Examination', 'Jharkhand Academic Council', 10],
+  ['jac-12', 'JAC Intermediate Examination', 'Jharkhand Academic Council', 12],
+  ['karnataka-10', 'Karnataka SSLC Examination', 'Karnataka School Examination and Assessment Board', 10],
+  ['karnataka-12', 'Karnataka 2nd PUC Examination', 'Department of Pre-University Education, Karnataka', 12],
+  ['kerala-10', 'Kerala SSLC Examination', 'Kerala Board of Public Examinations', 10],
+  ['kerala-12', 'Kerala Higher Secondary Examination (Plus Two)', 'Directorate of Higher Secondary Education, Kerala', 12],
+  ['mp-10', 'MPBSE High School Certificate Examination', 'Board of Secondary Education, Madhya Pradesh', 10],
+  ['mp-12', 'MPBSE Higher Secondary School Certificate Examination', 'Board of Secondary Education, Madhya Pradesh', 12],
+  ['maharashtra-10', 'Maharashtra SSC Examination', 'Maharashtra State Board of Secondary and Higher Secondary Education', 10],
+  ['maharashtra-12', 'Maharashtra HSC Examination', 'Maharashtra State Board of Secondary and Higher Secondary Education', 12],
+  ['manipur-10', 'Manipur HSLC Examination', 'Board of Secondary Education, Manipur', 10],
+  ['manipur-12', 'Manipur Higher Secondary Examination', 'Council of Higher Secondary Education, Manipur', 12],
+  ['meghalaya-10', 'MBOSE SSLC Examination', 'Meghalaya Board of School Education', 10],
+  ['meghalaya-12', 'MBOSE HSSLC Examination', 'Meghalaya Board of School Education', 12],
+  ['mizoram-10', 'Mizoram HSLC Examination', 'Mizoram Board of School Education', 10],
+  ['mizoram-12', 'Mizoram HSSLC Examination', 'Mizoram Board of School Education', 12],
+  ['nagaland-10', 'NBSE HSLC Examination', 'Nagaland Board of School Education', 10],
+  ['nagaland-12', 'NBSE HSSLC Examination', 'Nagaland Board of School Education', 12],
+  ['odisha-10', 'Odisha HSC Examination', 'Board of Secondary Education, Odisha', 10],
+  ['odisha-12', 'Odisha CHSE Higher Secondary Examination', 'Council of Higher Secondary Education, Odisha', 12],
+  ['punjab-10', 'PSEB Matriculation Examination', 'Punjab School Education Board', 10],
+  ['punjab-12', 'PSEB Senior Secondary Examination', 'Punjab School Education Board', 12],
+  ['rajasthan-10', 'RBSE Secondary Examination', 'Board of Secondary Education, Rajasthan', 10],
+  ['rajasthan-12', 'RBSE Senior Secondary Examination', 'Board of Secondary Education, Rajasthan', 12],
+  ['sikkim-10', 'Sikkim Class 10 Board Examination', 'Board of Open Schooling and Skill Education, Sikkim', 10],
+  ['sikkim-12', 'Sikkim Class 12 Board Examination', 'Board of Open Schooling and Skill Education, Sikkim', 12],
+  ['tn-10', 'Tamil Nadu SSLC Public Examination', 'Tamil Nadu Directorate of Government Examinations', 10],
+  ['tn-12', 'Tamil Nadu HSE +2 Public Examination', 'Tamil Nadu Directorate of Government Examinations', 12],
+  ['telangana-10', 'Telangana SSC Public Examination', 'Board of Secondary Education, Telangana', 10],
+  ['telangana-12', 'Telangana Intermediate 2nd Year Public Examination', 'Telangana State Board of Intermediate Education', 12],
+  ['tripura-10', 'TBSE Madhyamik Examination', 'Tripura Board of Secondary Education', 10],
+  ['tripura-12', 'TBSE Higher Secondary Examination', 'Tripura Board of Secondary Education', 12],
+  ['up-10', 'UPMSP High School Examination', 'Board of High School and Intermediate Education, Uttar Pradesh', 10],
+  ['up-12', 'UPMSP Intermediate Examination', 'Board of High School and Intermediate Education, Uttar Pradesh', 12],
+  ['uk-10', 'Uttarakhand High School Examination', 'Uttarakhand Board of School Education', 10],
+  ['uk-12', 'Uttarakhand Intermediate Examination', 'Uttarakhand Board of School Education', 12],
+  ['wb-10', 'West Bengal Madhyamik Pariksha', 'West Bengal Board of Secondary Education', 10],
+  ['wb-12', 'West Bengal Higher Secondary Examination', 'West Bengal Council of Higher Secondary Education', 12],
+  ['delhi-10', 'Delhi Class 10 Board Examination (affiliated board)', 'Directorate of Education, Delhi — schools may use CBSE/CISCE', 10],
+  ['delhi-12', 'Delhi Class 12 Board Examination (affiliated board)', 'Directorate of Education, Delhi — schools may use CBSE/CISCE', 12],
+  ['ladakh-10', 'Ladakh Class 10 Secondary Board Examination', 'Ladakh School Education Department — JKBOSE-linked arrangements', 10],
+  ['ladakh-12', 'Ladakh Class 12 Higher Secondary Board Examination', 'Ladakh School Education Department — JKBOSE-linked arrangements', 12],
+];
+
+/** A board exam row rendered into the shared reference-format row shape. */
+function boardExamRow([code, name, board, cls]) {
+  return [
+    code,
+    name,
+    board,
+    'School boards',
+    'Theory (pen & paper)',
+    BOARD_SUBJECTS[cls] ?? BOARD_SUBJECTS[12],
+    BOARD_NOTES[code] ?? BOARD_NOTE_DEFAULT,
+  ];
+}
+
 function buildReferenceFormat(row) {
   const [code, name, body, category, mode, subjects, note] = row;
   return {
@@ -622,6 +740,10 @@ const FORMATS = new Map();
 for (const f of ENFORCED) FORMATS.set(f.code, { ...f, enforced: true });
 for (const row of REFERENCE_ONLY) {
   const f = buildReferenceFormat(row);
+  FORMATS.set(f.code, f);
+}
+for (const exam of BOARD_EXAMS) {
+  const f = buildReferenceFormat(boardExamRow(exam));
   FORMATS.set(f.code, f);
 }
 
@@ -927,6 +1049,56 @@ function checkQuestionSlot(resolved, candidate) {
     return `${section.name} accepts only: ${allowed}.`;
   }
   return null;
+}
+
+/* ------------------------------ bank ceiling ------------------------------- */
+
+/**
+ * How many times over the number of questions an exam actually consumes may
+ * be banked for one slot.
+ *
+ * The bank used to be unbounded, which let a 25-question section accumulate
+ * hundreds of plaintext questions nobody would ever draw on — waste, and leak
+ * surface. Capping at exactly what is consumed would be worse: a setter who
+ * rejects one weak question could not replace it until somebody withdrew
+ * another. A factor of two keeps real choice while bounding the bank.
+ *
+ * The teacher's upload screen mirrors this constant — keep the two in step.
+ */
+const BANK_HEADROOM = 2;
+
+/**
+ * The bank ceiling for one (section, type, marks) slot of an exam.
+ *
+ * Returns null when no ceiling can be derived — an unenforced blueprint, an
+ * unknown section, or a type/marks pair the section does not use. Rejecting
+ * those is checkQuestionSlot's job; this function only sizes a slot that has
+ * already been found to align.
+ *
+ * `perPaper` is the most any single paper set may take, so `perPaper x sets`
+ * is what the exam consumes when every set is distinct, and the ceiling is
+ * that times the headroom. Note it uses the set count even when the exam
+ * allows question reuse: reuse being permitted does not mean the setter will
+ * use it, and a cap that assumed reuse would block a setter who wants genuinely
+ * distinct sets.
+ */
+function slotCeiling(resolved, candidate, setCount, headroom = BANK_HEADROOM) {
+  if (!resolved || !resolved.enforced) return null;
+  const section = (resolved.sections ?? []).find((s) => s.name === candidate.section_name);
+  if (!section) return null;
+
+  const perPaper = (section.requirements ?? [])
+    .filter(
+      (r) =>
+        (r.types ?? typesFor(r)).includes(candidate.question_type) &&
+        Number(r.marks_correct) === Number(candidate.marks)
+    )
+    .reduce((n, r) => Math.max(n, Number(r.max) || 0), 0);
+  if (perPaper <= 0) return null;
+
+  const sets = Math.max(1, Math.trunc(Number(setCount) || 1));
+  const target = perPaper * sets;
+  return { perPaper, sets, target, ceiling: target * headroom };
 }
 
 /* --------------------------- admin-defined counts -------------------------- */
@@ -1246,6 +1418,8 @@ module.exports = {
   resolveFormat,
   validateComposition,
   checkQuestionSlot,
+  BANK_HEADROOM,
+  slotCeiling,
   buildPaperView,
   negativeFor,
   requirementLabel,

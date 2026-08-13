@@ -62,8 +62,11 @@ const SELF = 'Upload';
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const;
 const OPTION_LABELS = ['A', 'B', 'C', 'D'] as const;
+/** Every answer style the bank accepts, for exams with no enforced quota. */
 const FREE_TYPES: { key: QuestionType; label: string }[] = [
   { key: 'mcq', label: 'MCQ' },
+  { key: 'msq', label: 'MSQ' },
+  { key: 'numerical', label: 'Numerical' },
   { key: 'theoretical', label: 'Theory' },
 ];
 // Seed suggestions, used only when the exam has no format to drive subjects.
@@ -74,12 +77,21 @@ const QUESTION_BATCH_HINT = 200;
 const PER_LEAF = 3;
 
 /**
+ * Headroom on the bank — must match BANK_HEADROOM in server/src/examFormats.js.
+ * The server is authoritative; mirroring it here only lets the UI show a slot
+ * filling up and stop a doomed upload before it costs a round trip.
+ */
+const BANK_HEADROOM = 2;
+
+/**
  * One writable slot in the format: a (section, type, marks) triple.
  *
- * `banked` is how many such questions already exist for the exam and
- * `perPaper` how many each paper set needs. The bank is UNLIMITED, so a slot
- * is never "full" — banking 500 questions for a 25-question section is the
- * point. The exact-count rule applies when a set is composed.
+ * `banked` is how many such questions already exist for the exam, `perPaper`
+ * how many each paper set takes, `target` what every set consumes together,
+ * and `ceiling` the point at which the slot stops accepting more. The gap
+ * between target and ceiling is deliberate slack, so the setter can reject a
+ * weak question without the section becoming unfillable. The exact-count rule
+ * still applies when a set is composed.
  */
 interface Slot {
   key: string;
@@ -90,6 +102,8 @@ interface Slot {
   label: string;
   banked: number;
   perPaper: number;
+  target: number;
+  ceiling: number;
 }
 
 /** Which archive the teacher is working in. */
@@ -157,7 +171,7 @@ export default function UploadQuestionScreen() {
     setSubjectSuggestions(Array.from(new Set([...SEED_SUBJECTS, ...fromDb])).sort());
   }, []);
 
-  /** Everything already in this exam's bank, paged — the bank is unbounded. */
+  /** Everything already in this exam's bank, paged — it runs to thousands of rows. */
   const loadBank = useCallback(async () => {
     if (!examId) {
       setBank([]);
@@ -221,6 +235,7 @@ export default function UploadQuestionScreen() {
     for (const section of mySections) {
       section.requirements.forEach((requirement, i) => {
         for (const type of requirement.types) {
+          const target = requirement.max * setCount;
           out.push({
             key: `${section.name}|${i}|${type}`,
             sectionName: section.name,
@@ -230,12 +245,14 @@ export default function UploadQuestionScreen() {
             label: `${section.name} · ${TYPE_SHORT[type]} · ${requirement.marks_correct} mark${requirement.marks_correct === 1 ? '' : 's'}`,
             banked: bankDepth.get(`${section.name}|${type}|${requirement.marks_correct}`) ?? 0,
             perPaper: requirement.max,
+            target,
+            ceiling: target * BANK_HEADROOM,
           });
         }
       });
     }
     return out;
-  }, [enforced, mySections, bankDepth]);
+  }, [enforced, mySections, bankDepth, setCount]);
 
   const slot = slots.find((s) => s.key === slotKey) ?? null;
 
@@ -315,6 +332,13 @@ export default function UploadQuestionScreen() {
       showAlert('Pick an exam', 'Questions must belong to an exam scheduled by the Admin.');
       return;
     }
+    if (slot && slot.banked >= slot.ceiling) {
+      showAlert(
+        'Slot full',
+        `${slot.label} already holds ${slot.banked} questions — the ceiling is ${slot.ceiling} (${slot.target} needed across ${setCount === 1 ? 'the paper' : `${setCount} sets`}, doubled for choice). Withdraw one from My Questions before adding another.`
+      );
+      return;
+    }
     const built = buildQuestion();
     if (typeof built === 'string') {
       showAlert('Incomplete', built);
@@ -382,8 +406,22 @@ export default function UploadQuestionScreen() {
       return;
     }
 
-    const rows: NewQuestionInput[] = extracted
-      .filter((_, i) => picked[i])
+    // Under an enforced format the quota fixes the answer style. Silently
+    // recasting an extracted question to the quota's type would relabel a
+    // subjective question as an MCQ and then fail server-side with a shape
+    // error that never mentions the real problem, so name it here instead.
+    const chosen = extracted.filter((_, i) => picked[i]);
+    const mismatched = enforced && slot ? chosen.filter((q) => q.question_type !== slot.type) : [];
+    if (mismatched.length && slot) {
+      const found = Array.from(new Set(mismatched.map((q) => TYPE_SHORT[q.question_type] ?? q.question_type)));
+      showAlert(
+        'Wrong question type',
+        `${mismatched.length} selected question${mismatched.length === 1 ? ' is' : 's are'} ${found.join('/')}, but "${slot.label}" only accepts ${TYPE_SHORT[slot.type]}. Deselect ${mismatched.length === 1 ? 'it' : 'them'}, or choose a quota that takes ${found.join('/')}.`
+      );
+      return;
+    }
+
+    const rows: NewQuestionInput[] = chosen
       .map((q) => ({
         // Under an enforced format the chosen quota wins: an imported PDF
         // cannot introduce a type or marks value the format does not define.
@@ -526,25 +564,32 @@ export default function UploadQuestionScreen() {
                 <Text style={styles.assigned}>You are assigned to: {assigned.join(', ')}.</Text>
               ) : null}
               <Text style={styles.bankNote}>
-                The bank is unlimited — write as many as you like. These counts show how deep it is
-                against what {setCount === 1 ? 'the paper needs' : `${setCount} sets need`}.
+                These counts show how deep the bank is against what{' '}
+                {setCount === 1 ? 'the paper needs' : `${setCount} sets need`}. You may bank up to
+                twice that, so the setter has questions to choose between; past the ceiling a slot
+                stops accepting more.
               </Text>
 
               <View style={styles.quotaList}>
                 {slots.map((s) => {
-                  const target = s.perPaper * setCount;
-                  const ok = s.banked >= target;
+                  const full = s.banked >= s.ceiling;
+                  const ok = s.banked >= s.target;
                   return (
                     <View key={s.key} style={[styles.quota, { borderColor: p.rule }]}>
                       <Text style={styles.quotaLabel} numberOfLines={2}>
                         {s.label}
                       </Text>
                       <View style={styles.quotaFigures}>
-                        <Text style={[styles.quotaCount, { color: ok ? p.success : p.warning }]}>
-                          {s.banked}/{target} {ok ? '✓' : '⚠'}
+                        <Text
+                          style={[
+                            styles.quotaCount,
+                            { color: full ? p.danger : ok ? p.success : p.warning },
+                          ]}
+                        >
+                          {s.banked}/{s.target} {full ? '● FULL' : ok ? '✓' : '⚠'}
                         </Text>
                         <Text style={styles.quotaPer}>
-                          per set {s.perPaper}/{s.perPaper}
+                          per set {s.perPaper} · ceiling {s.ceiling}
                         </Text>
                       </View>
                     </View>
@@ -577,8 +622,8 @@ export default function UploadQuestionScreen() {
             />
             {enforced && slot ? (
               <Text style={styles.slotNote}>
-                {slot.banked} banked · each paper set uses {slot.perPaper} · marks fixed at{' '}
-                {slot.marks}
+                {slot.banked} banked of {slot.target} needed · ceiling {slot.ceiling}
+                {slot.banked >= slot.ceiling ? ' · FULL' : ''} · marks fixed at {slot.marks}
               </Text>
             ) : null}
           </View>
@@ -894,8 +939,14 @@ export default function UploadQuestionScreen() {
                 <PopupRow
                   key={s.key}
                   label={s.label}
-                  hint={`${s.banked} in the bank · each paper set uses ${s.perPaper}`}
-                  tag={s.banked < s.perPaper * setCount ? 'NEEDS MORE' : undefined}
+                  hint={`${s.banked} of ${s.target} needed · ceiling ${s.ceiling}`}
+                  tag={
+                    s.banked >= s.ceiling
+                      ? 'FULL'
+                      : s.banked < s.target
+                        ? 'NEEDS MORE'
+                        : undefined
+                  }
                   active={s.key === slotKey}
                   onPress={() => {
                     setSlotKey(s.key);
