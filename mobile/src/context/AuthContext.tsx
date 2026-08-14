@@ -15,6 +15,14 @@ interface AuthContextValue {
   /** Creates the account (pre-confirmed, no email) and signs straight in. */
   signUp: (role: Role, fullName: string, email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  /**
+   * True for one render cycle right after a fresh `signIn`/`signUp` — never
+   * on a cold-start session restore. Screens that play a one-shot "welcome"
+   * cinematic (see the Teacher book intro) gate on this and call
+   * `clearJustSignedIn` once it has played.
+   */
+  justSignedIn: boolean;
+  clearJustSignedIn: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -23,6 +31,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [justSignedIn, setJustSignedIn] = useState(false);
 
   useEffect(() => {
     void supabase.auth.getSession().then(({ data }) => {
@@ -96,6 +105,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         `This account is registered as ${ROLE_LABEL[realRole]}. Switch to that tab and sign in again.`
       );
     }
+    setJustSignedIn(true);
   }, []);
 
   const signInCenter = useCallback(async (code: string, password: string) => {
@@ -127,17 +137,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (error) throw new Error(error.message);
       // Session is live; RootNavigator switches to the role's app.
+      setJustSignedIn(true);
     },
     []
   );
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
+    setJustSignedIn(false);
   }, []);
+
+  const clearJustSignedIn = useCallback(() => setJustSignedIn(false), []);
 
   return (
     <AuthContext.Provider
-      value={{ session, profile, loading, signIn, signInCenter, signUp, signOut }}
+      value={{
+        session,
+        profile,
+        loading,
+        signIn,
+        signInCenter,
+        signUp,
+        signOut,
+        justSignedIn,
+        clearJustSignedIn,
+      }}
     >
       {children}
     </AuthContext.Provider>

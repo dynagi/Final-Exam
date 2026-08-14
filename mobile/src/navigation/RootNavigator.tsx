@@ -11,16 +11,18 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Platform, StyleSheet, View } from 'react-native';
+import BookIntro from '../components/BookIntro';
 import LoadingScreen from '../components/LoadingScreen';
 import { HeaderActions } from '../components/UI';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { gradients, ThemeColors } from '../lib/theme';
-import { Role } from '../lib/types';
+import { Role, ROLE_LABEL } from '../lib/types';
 
 import BookScreen from '../screens/auth/BookScreen';
 import CenterLoginScreen from '../screens/auth/CenterLoginScreen';
 import LoginScreen from '../screens/auth/LoginScreen';
+import PendingApprovalScreen from '../screens/auth/PendingApprovalScreen';
 import SignUpScreen from '../screens/auth/SignUpScreen';
 
 import InvigilatorScanScreen from '../screens/invigilator/InvigilatorScanScreen';
@@ -34,7 +36,9 @@ import MyPapersScreen from '../screens/setter/MyPapersScreen';
 import QuestionPoolScreen from '../screens/setter/QuestionPoolScreen';
 import SetterDashboard from '../screens/setter/SetterDashboard';
 
+import AdminApprovalsScreen from '../screens/admin/AdminApprovalsScreen';
 import AdminDashboard from '../screens/admin/AdminDashboard';
+import AdminOverviewScreen from '../screens/admin/AdminOverviewScreen';
 import AdminPapersScreen from '../screens/admin/AdminPapersScreen';
 import AuditLogScreen from '../screens/admin/AuditLogScreen';
 import CentersScreen from '../screens/admin/CentersScreen';
@@ -253,6 +257,30 @@ function AdminTabs() {
         }}
       />
       <Tabs.Screen
+        name="AdminOverview"
+        component={AdminOverviewScreen}
+        options={{
+          title: 'Command Overview',
+          tabBarLabel: 'Overview',
+          tabBarIcon: icon('bar-chart-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
+      />
+      <Tabs.Screen
+        name="Approvals"
+        component={AdminApprovalsScreen}
+        options={{
+          title: 'Account Approvals',
+          tabBarLabel: 'Approvals',
+          tabBarIcon: icon('person-add-outline'),
+          // Carries the archive header and the index rail itself.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
+      />
+      <Tabs.Screen
         name="Papers"
         component={AdminPapersScreen}
         options={{
@@ -387,7 +415,7 @@ function useMinimumSplash(active: boolean, minMs: number): boolean {
 const SPLASH_MIN_MS = 2600;
 
 export default function RootNavigator() {
-  const { session, profile, loading } = useAuth();
+  const { session, profile, loading, justSignedIn, clearJustSignedIn } = useAuth();
   const { colors, isDark } = useTheme();
   const navTheme = useMemo(() => navThemeFor(colors, isDark), [colors, isDark]);
   const showSplash = useMinimumSplash(loading, SPLASH_MIN_MS);
@@ -411,8 +439,28 @@ export default function RootNavigator() {
           <AuthStack.Screen name="SignUp" component={SignUpScreen} />
           <AuthStack.Screen name="CenterLogin" component={CenterLoginScreen} />
         </AuthStack.Navigator>
+      ) : (profile.role === 'teacher' || profile.role === 'paper_setter') &&
+        profile.status &&
+        profile.status !== 'approved' ? (
+        // Teacher/paper-setter sign-ups sit here until an Admin approves
+        // them — the server refuses every request for a non-approved
+        // profile, so there is nothing else this session can do. Admin and
+        // invigilator accounts are never gated here (they are always
+        // 'approved' by design — see patch-9-account-approval.sql), and the
+        // `profile.status &&` guard means an older profiles row that
+        // predates the migration (status column not selected yet) never
+        // locks anyone out either.
+        <PendingApprovalScreen />
       ) : profile.role === 'teacher' ? (
-        <TeacherTabs />
+        justSignedIn ? (
+          <BookIntro
+            name={profile.full_name}
+            role={ROLE_LABEL.teacher}
+            onDone={clearJustSignedIn}
+          />
+        ) : (
+          <TeacherTabs />
+        )
       ) : profile.role === 'paper_setter' ? (
         <SetterTabs />
       ) : profile.role === 'invigilator' ? (

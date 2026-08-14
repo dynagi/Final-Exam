@@ -11,6 +11,7 @@ import {
   PaperPreviewResult,
   PaperValidationResult,
   PrintResult,
+  Profile,
   QrDetection,
   QuestionType,
   Role,
@@ -80,7 +81,23 @@ async function patch(path: string, body: Record<string, unknown>): Promise<Recor
  * rate limit can never block it.
  */
 export const signUpUser = (role: Role, fullName: string, email: string, password: string) =>
-  request('/api/auth/signup', { role, fullName, email, password });
+  request('/api/auth/signup', { role, fullName, email, password }) as Promise<{
+    ok: boolean;
+    user_id: string;
+    status: 'pending';
+  }>;
+
+/* ----------------------------- account approval ---------------------------- */
+
+/** Teacher/paper-setter sign-ups waiting on an Admin's decision. */
+export const fetchPendingAccounts = () =>
+  get('/api/accounts/pending') as unknown as Promise<{ ok: boolean; accounts: Profile[] }>;
+
+export const approveAccount = (id: string) =>
+  post(`/api/accounts/${id}/approve`, {}) as unknown as Promise<{ ok: boolean; account: Profile }>;
+
+/** Declines the sign-up and deletes the account outright. */
+export const rejectAccount = (id: string) => post(`/api/accounts/${id}/reject`, {});
 
 /* ------------------------- exam formats & composition --------------------- */
 

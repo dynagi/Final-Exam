@@ -20,6 +20,8 @@ export function useAdminIndex(options: {
   const items = useMemo<IndexItem[]>(
     () => [
       { route: 'AdminDashboard', label: 'Dashboard', icon: 'home' },
+      { route: 'AdminOverview', label: 'Overview', icon: 'bar-chart-outline' },
+      { route: 'Approvals', label: 'Approvals', icon: 'person-add-outline' },
       { route: 'Papers', label: 'Papers', icon: 'documents-outline' },
       { route: 'PrintPreview', label: 'Print', icon: 'print-outline' },
       { route: 'Exams', label: 'Exams', icon: 'calendar-outline' },

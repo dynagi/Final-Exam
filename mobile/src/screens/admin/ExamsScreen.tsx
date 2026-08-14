@@ -67,8 +67,16 @@ const SELF = 'Exams';
 
 type ExamWithPaper = Exam & { paper?: { title: string } | null };
 type SlotDraft = { start: string; end: string };
-/** One Admin-defined section quota, for formats the reference leaves open. */
+/**
+ * One Admin-defined quota row, for formats the reference leaves open. A
+ * section (matched by `name`) may hold MORE THAN ONE row — that is what
+ * makes a hybrid section possible, e.g. a board's "Science" section with
+ * both an MCQ quota and a separate subjective/theoretical quota. `id` is a
+ * stable React key since `name` is no longer unique once a section can hold
+ * several rows.
+ */
 type CustomSection = {
+  id: string;
   name: string;
   subject: string;
   question_type: QuestionType;
@@ -76,6 +84,21 @@ type CustomSection = {
   marks_correct: string;
   negative_marks: string;
 };
+
+/**
+ * The quick preset for a paper's overall style. It exists purely to keep the
+ * common case simple: an exam that is entirely MCQ never needs the
+ * Subjective/Theoretical chip in front of the Admin, and a theory paper never
+ * needs MCQ/MSQ/Numerical. 'hybrid' unlocks the full per-row type picker (and
+ * lets a section carry more than one quota row) for exams that genuinely mix
+ * objective and subjective questions, like a school board paper.
+ */
+type PaperStyle = 'mcq' | 'theory' | 'hybrid';
+const PAPER_STYLES: { key: PaperStyle; label: string; hint: string }[] = [
+  { key: 'mcq', label: 'MCQ Only', hint: 'Every section is objective (MCQ).' },
+  { key: 'theory', label: 'Theory Only', hint: 'Every section is subjective/descriptive.' },
+  { key: 'hybrid', label: 'Hybrid', hint: 'Mix MCQ, MSQ, Numerical and Subjective — even within one section.' },
+];
 
 /**
  * The answer style a section takes. This is what decides which questions
@@ -90,6 +113,13 @@ const SECTION_TYPES: { key: QuestionType; label: string }[] = [
   { key: 'theoretical', label: 'Subjective' },
 ];
 
+let rowIdSeq = 0;
+/** Fresh id for a new quota row — only needs to be unique within this session. */
+function nextRowId(name: string): string {
+  rowIdSeq += 1;
+  return `${name}__${rowIdSeq}`;
+}
+
 const DEFAULT_SLOTS: SlotDraft[] = [
   { start: '09:00', end: '12:00' },
   { start: '14:00', end: '17:00' },
@@ -99,6 +129,36 @@ function minutesBetween(date: string, start: string, end: string): number {
   const s = new Date(`${date}T${start}:00`).getTime();
   const e = new Date(`${date}T${end}:00`).getTime();
   return Math.round((e - s) / 60000);
+}
+
+/**
+ * How far out an exam may be scheduled — mirrors the server's own check in
+ * POST /api/exams (server/src/index.js), which is the actual enforcement;
+ * this is only so the Admin sees the problem before submitting.
+ */
+const MIN_SCHEDULE_LEAD_DAYS = 2;
+const MAX_SCHEDULE_LEAD_YEARS = 1;
+
+/** null when the exam's earliest slot falls inside the allowed window. */
+function scheduleWindowError(date: string, drafts: SlotDraft[]): string | null {
+  const starts = drafts
+    .map((s) => new Date(`${date}T${s.start}:00`).getTime())
+    .filter((t) => Number.isFinite(t));
+  if (starts.length === 0) return null;
+  const earliest = Math.min(...starts);
+
+  const minAllowed = new Date();
+  minAllowed.setDate(minAllowed.getDate() + MIN_SCHEDULE_LEAD_DAYS);
+  const maxAllowed = new Date();
+  maxAllowed.setFullYear(maxAllowed.getFullYear() + MAX_SCHEDULE_LEAD_YEARS);
+
+  if (earliest < minAllowed.getTime()) {
+    return `An exam must be scheduled at least ${MIN_SCHEDULE_LEAD_DAYS} days from now — earliest allowed is ${minAllowed.toISOString().slice(0, 10)}.`;
+  }
+  if (earliest > maxAllowed.getTime()) {
+    return `An exam cannot be scheduled more than ${MAX_SCHEDULE_LEAD_YEARS} year${MAX_SCHEDULE_LEAD_YEARS === 1 ? '' : 's'} from now — latest allowed is ${maxAllowed.toISOString().slice(0, 10)}.`;
+  }
+  return null;
 }
 
 /** "09:00" + 180 min -> "12:00" (same day; slots never span midnight). */
@@ -146,6 +206,7 @@ export default function ExamsScreen() {
   const [format, setFormat] = useState<ResolvedFormat | null>(null);
   const [loadingFormat, setLoadingFormat] = useState(false);
   const [customSections, setCustomSections] = useState<CustomSection[]>([]);
+  const [paperStyle, setPaperStyle] = useState<PaperStyle>('hybrid');
 
   // Subject assignment (teacher -> subjects, per exam).
   const [assignTarget, setAssignTarget] = useState<ExamWithPaper | null>(null);
@@ -204,10 +265,14 @@ export default function ExamsScreen() {
       const resolved = await loadFormat(code, Number(year));
       setFormat(resolved);
       // Open formats need counts from the Admin; seed one row per subject.
+      // Style defaults to 'hybrid' (the full picker) so nothing is hidden
+      // until the Admin actively tells us this exam is single-style.
+      setPaperStyle('hybrid');
       setCustomSections(
         resolved.enforced
           ? []
           : resolved.sections.map((s) => ({
+              id: nextRowId(s.name),
               name: s.name,
               subject: s.subject,
               // Seed from whatever the reference already implies for the
@@ -257,8 +322,47 @@ export default function ExamsScreen() {
     setFormatKey(null);
     setFormat(null);
     setCustomSections([]);
+    setPaperStyle('hybrid');
     setSetCount(4);
     setAllowReuse(false);
+  };
+
+  /** Add another quota row to an existing section — what makes it hybrid. */
+  const addSectionRow = (name: string, subject: string) =>
+    setCustomSections((prev) => [
+      ...prev,
+      { id: nextRowId(name), name, subject, question_type: 'mcq', count: '25', marks_correct: '1', negative_marks: '0' },
+    ]);
+
+  /** Remove one quota row — refused when it is the section's only row. */
+  const removeSectionRow = (id: string) =>
+    setCustomSections((prev) => {
+      const row = prev.find((r) => r.id === id);
+      if (!row) return prev;
+      const siblings = prev.filter((r) => r.name === row.name);
+      if (siblings.length <= 1) return prev;
+      return prev.filter((r) => r.id !== id);
+    });
+
+  /**
+   * Switching off 'hybrid' locks every section to one type and one row —
+   * an MCQ-only or theory-only exam has no use for a second quota per
+   * section, so extra hybrid rows are dropped rather than left dangling.
+   */
+  const changePaperStyle = (style: PaperStyle) => {
+    setPaperStyle(style);
+    if (style === 'hybrid') return;
+    const lockedType: QuestionType = style === 'mcq' ? 'mcq' : 'theoretical';
+    setCustomSections((prev) => {
+      const seen = new Set<string>();
+      const collapsed: CustomSection[] = [];
+      for (const row of prev) {
+        if (seen.has(row.name)) continue;
+        seen.add(row.name);
+        collapsed.push({ ...row, question_type: lockedType });
+      }
+      return collapsed;
+    });
   };
 
   const startCreating = () => {
@@ -301,6 +405,8 @@ export default function ExamsScreen() {
     }
     if (name.trim().length < 3) return showAlert('Missing name', 'Give the exam a name, e.g. "NEET UG 2026".');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) return showAlert('Invalid date', 'Use YYYY-MM-DD.');
+    const windowError = scheduleWindowError(date.trim(), slotDrafts);
+    if (windowError) return showAlert('Schedule out of range', windowError);
     if (!format.enforced) {
       for (const s of customSections) {
         const count = parseInt(s.count, 10);
@@ -484,6 +590,10 @@ export default function ExamsScreen() {
           onChangeText={setDate}
           autoCapitalize="none"
         />
+        <Text style={styles.fieldHint}>
+          Must be at least {MIN_SCHEDULE_LEAD_DAYS} days from today and no more than{' '}
+          {MAX_SCHEDULE_LEAD_YEARS} year{MAX_SCHEDULE_LEAD_YEARS === 1 ? '' : 's'} out.
+        </Text>
 
         <View style={styles.slotsHeader}>
           <Text style={styles.fieldLabel}>Slots ({slotDrafts.length}) — 2–3 per day</Text>
@@ -675,6 +785,10 @@ export default function ExamsScreen() {
         loadingFormat={loadingFormat}
         customSections={customSections}
         onCustomSections={setCustomSections}
+        paperStyle={paperStyle}
+        onPaperStyle={changePaperStyle}
+        onAddSectionRow={addSectionRow}
+        onRemoveSectionRow={removeSectionRow}
         setCount={setCount}
         onSetCount={setSetCount}
         allowReuse={allowReuse}
@@ -1406,6 +1520,10 @@ function NoticeBoard({
   loadingFormat,
   customSections,
   onCustomSections,
+  paperStyle,
+  onPaperStyle,
+  onAddSectionRow,
+  onRemoveSectionRow,
   setCount,
   onSetCount,
   allowReuse,
@@ -1423,6 +1541,10 @@ function NoticeBoard({
   loadingFormat: boolean;
   customSections: CustomSection[];
   onCustomSections: (fn: (prev: CustomSection[]) => CustomSection[]) => void;
+  paperStyle: PaperStyle;
+  onPaperStyle: (style: PaperStyle) => void;
+  onAddSectionRow: (name: string, subject: string) => void;
+  onRemoveSectionRow: (id: string) => void;
   setCount: number;
   onSetCount: (n: number) => void;
   allowReuse: boolean;
@@ -1430,7 +1552,7 @@ function NoticeBoard({
 }) {
   const p = useArchivePalette();
   const reduced = useReducedMotion();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const board = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(visible);
   const [archiveOpen, setArchiveOpen] = useState(false);
@@ -1454,6 +1576,11 @@ function NoticeBoard({
 
   const selectedFormatOption = formatOptions.find((o) => o.value === formatKey) ?? null;
   const boardWidth = Math.min(width - 32, 620);
+  // An explicit pixel height (mirroring ExaminationArchive below) rather than
+  // a CSS percentage — percentage heights need every ancestor in the chain to
+  // resolve a definite height first, which is unreliable enough (especially
+  // on web) that the board's content was overflowing past the screen edge.
+  const boardHeight = Math.min(height * 0.86, 760);
   const translateY = board.interpolate({ inputRange: [0, 1], outputRange: [42, 0] });
   const scale = board.interpolate({ inputRange: [0, 1], outputRange: [0.93, 1] });
 
@@ -1474,6 +1601,7 @@ function NoticeBoard({
             ncStyles.frame,
             {
               width: boardWidth,
+              height: boardHeight,
               borderColor: p.coverEdge,
               backgroundColor: p.cover,
               opacity: board,
@@ -1558,74 +1686,127 @@ function NoticeBoard({
                   <Ionicons name="pin" size={13} color="#C0392B" style={ncStyles.pinIcon} />
                   <Text style={ncStyles.pinLabel}>{questionsSectionNo}. Questions per Section (Required)</Text>
                   <Text style={ncStyles.pinHint}>Every paper for this exam must hold exactly these counts.</Text>
-                  {customSections.map((s, i) => (
-                    <View key={s.name} style={ncStyles.customRow}>
-                      <Text style={ncStyles.customName}>{s.name}</Text>
-                      <View style={ncStyles.typeRow}>
-                        {SECTION_TYPES.map((t) => {
-                          const on = s.question_type === t.key;
-                          return (
+
+                  <View style={ncStyles.styleRow}>
+                    {PAPER_STYLES.map((opt) => {
+                      const on = paperStyle === opt.key;
+                      return (
+                        <Pressable
+                          key={opt.key}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: on }}
+                          onPress={() => onPaperStyle(opt.key)}
+                          style={[ncStyles.styleChip, on && ncStyles.styleChipOn]}
+                        >
+                          <Text style={[ncStyles.styleChipText, on && ncStyles.styleChipTextOn]}>{opt.label}</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                  <Text style={ncStyles.pinHint}>{PAPER_STYLES.find((o) => o.key === paperStyle)?.hint}</Text>
+
+                  {Array.from(new Set(customSections.map((s) => s.name))).map((name) => {
+                    const rows = customSections.filter((s) => s.name === name);
+                    return (
+                      <View key={name} style={ncStyles.customSectionGroup}>
+                        <View style={ncStyles.customSectionHead}>
+                          <Text style={ncStyles.customName}>{name}</Text>
+                          {paperStyle === 'hybrid' ? (
                             <Pressable
-                              key={t.key}
                               accessibilityRole="button"
-                              accessibilityState={{ selected: on }}
-                              onPress={() =>
-                                onCustomSections((prev) =>
-                                  prev.map((r, idx) =>
-                                    idx === i ? { ...r, question_type: t.key } : r
-                                  )
-                                )
-                              }
-                              style={[ncStyles.typeChip, on && ncStyles.typeChipOn]}
+                              onPress={() => onAddSectionRow(name, rows[0].subject)}
+                              style={ncStyles.addRowBtn}
+                              hitSlop={6}
                             >
-                              <Text style={[ncStyles.typeChipText, on && ncStyles.typeChipTextOn]}>
-                                {t.label}
-                              </Text>
+                              <Ionicons name="add-circle-outline" size={14} color="#EADFC2" />
+                              <Text style={ncStyles.addRowText}>Add quota</Text>
                             </Pressable>
-                          );
-                        })}
+                          ) : null}
+                        </View>
+
+                        {rows.map((s) => (
+                          <View key={s.id} style={ncStyles.customRow}>
+                            {paperStyle === 'hybrid' ? (
+                              <View style={ncStyles.typeRow}>
+                                {SECTION_TYPES.map((t) => {
+                                  const on = s.question_type === t.key;
+                                  return (
+                                    <Pressable
+                                      key={t.key}
+                                      accessibilityRole="button"
+                                      accessibilityState={{ selected: on }}
+                                      onPress={() =>
+                                        onCustomSections((prev) =>
+                                          prev.map((r) => (r.id === s.id ? { ...r, question_type: t.key } : r))
+                                        )
+                                      }
+                                      style={[ncStyles.typeChip, on && ncStyles.typeChipOn]}
+                                    >
+                                      <Text style={[ncStyles.typeChipText, on && ncStyles.typeChipTextOn]}>
+                                        {t.label}
+                                      </Text>
+                                    </Pressable>
+                                  );
+                                })}
+                                {rows.length > 1 ? (
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityLabel="Remove this quota"
+                                    onPress={() => onRemoveSectionRow(s.id)}
+                                    hitSlop={8}
+                                    style={ncStyles.removeRowBtn}
+                                  >
+                                    <Ionicons name="close-circle-outline" size={16} color="#C0392B" />
+                                  </Pressable>
+                                ) : null}
+                              </View>
+                            ) : null}
+                            <View style={ncStyles.customInputs}>
+                              <View style={ncStyles.customField}>
+                                <Input
+                                  label="Questions"
+                                  placeholder="25"
+                                  keyboardType="number-pad"
+                                  value={s.count}
+                                  onChangeText={(t) =>
+                                    onCustomSections((prev) => prev.map((r) => (r.id === s.id ? { ...r, count: t } : r)))
+                                  }
+                                />
+                              </View>
+                              <View style={ncStyles.customField}>
+                                <Input
+                                  label="Marks"
+                                  placeholder="1"
+                                  keyboardType="numeric"
+                                  value={s.marks_correct}
+                                  onChangeText={(t) =>
+                                    onCustomSections((prev) =>
+                                      prev.map((r) => (r.id === s.id ? { ...r, marks_correct: t } : r))
+                                    )
+                                  }
+                                />
+                              </View>
+                              {s.question_type !== 'theoretical' ? (
+                                <View style={ncStyles.customField}>
+                                  <Input
+                                    label="Negative"
+                                    placeholder="0"
+                                    keyboardType="numeric"
+                                    value={s.negative_marks}
+                                    onChangeText={(t) =>
+                                      onCustomSections((prev) =>
+                                        prev.map((r) => (r.id === s.id ? { ...r, negative_marks: t } : r))
+                                      )
+                                    }
+                                  />
+                                </View>
+                              ) : null}
+                            </View>
+                          </View>
+                        ))}
                       </View>
-                      <View style={ncStyles.customInputs}>
-                        <View style={ncStyles.customField}>
-                          <Input
-                            label="Questions"
-                            placeholder="25"
-                            keyboardType="number-pad"
-                            value={s.count}
-                            onChangeText={(t) =>
-                              onCustomSections((prev) => prev.map((r, idx) => (idx === i ? { ...r, count: t } : r)))
-                            }
-                          />
-                        </View>
-                        <View style={ncStyles.customField}>
-                          <Input
-                            label="Marks"
-                            placeholder="1"
-                            keyboardType="numeric"
-                            value={s.marks_correct}
-                            onChangeText={(t) =>
-                              onCustomSections((prev) =>
-                                prev.map((r, idx) => (idx === i ? { ...r, marks_correct: t } : r))
-                              )
-                            }
-                          />
-                        </View>
-                        <View style={ncStyles.customField}>
-                          <Input
-                            label="Negative"
-                            placeholder="0"
-                            keyboardType="numeric"
-                            value={s.negative_marks}
-                            onChangeText={(t) =>
-                              onCustomSections((prev) =>
-                                prev.map((r, idx) => (idx === i ? { ...r, negative_marks: t } : r))
-                              )
-                            }
-                          />
-                        </View>
-                      </View>
-                    </View>
-                  ))}
+                    );
+                  })}
                 </View>
               ) : null}
 
@@ -2138,11 +2319,13 @@ const arStyles = StyleSheet.create({
 const ncStyles = StyleSheet.create({
   scrim: { backgroundColor: 'rgba(0,0,0,0.58)' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+  // Height is set inline (boardHeight, computed from useWindowDimensions) —
+  // see the comment above that computation for why a fixed pixel value beats
+  // a CSS percentage here.
   frame: {
     borderWidth: 6,
     borderRadius: 8,
     padding: 8,
-    maxHeight: '86%',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 18 },
     shadowOpacity: 0.55,
@@ -2150,6 +2333,7 @@ const ncStyles = StyleSheet.create({
     elevation: 24,
   },
   surface: {
+    flex: 1,
     borderRadius: 3,
     overflow: 'hidden',
     paddingVertical: 16,
@@ -2183,7 +2367,12 @@ const ncStyles = StyleSheet.create({
     marginTop: 9,
     marginBottom: 12,
   },
-  scroll: { maxHeight: 440 },
+  // Flexes to fill whatever room is left inside the frame's 86%-of-screen
+  // cap, between the fixed title block above and the Continue/Cancel
+  // buttons below — so the board grows with its content (paper style,
+  // per-section quota rows, etc.) without ever pushing those buttons off
+  // screen; it scrolls internally instead.
+  scroll: { flex: 1 },
   pin: {
     backgroundColor: '#F3E9C9',
     borderRadius: 2,
@@ -2227,11 +2416,36 @@ const ncStyles = StyleSheet.create({
   blueprintTotals: { fontFamily: serif, fontSize: 11.5, fontWeight: '700', color: '#6B4E12', marginTop: 4 },
   blueprintFree: { fontFamily: serif, fontSize: 11.5, color: '#5A5030', marginTop: 4, lineHeight: 16 },
   blueprintNote: { fontFamily: serif, fontSize: 10.5, color: '#7A6E45', marginTop: 4 },
+  styleRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4, marginBottom: 4 },
+  styleChip: {
+    borderWidth: 1,
+    borderColor: '#B8A85F',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  styleChipOn: { backgroundColor: '#3A4830', borderColor: '#3A4830' },
+  styleChipText: { fontFamily: serif, fontSize: 11, fontWeight: '700', color: '#5A5030' },
+  styleChipTextOn: { color: '#F3E9C9' },
+  customSectionGroup: { marginTop: 10 },
+  customSectionHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  addRowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#3A4830',
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+    marginBottom: 4,
+  },
+  addRowText: { fontFamily: serif, fontSize: 10, fontWeight: '700', color: '#EADFC2' },
+  removeRowBtn: { marginLeft: 2 },
   customRow: { marginTop: 6 },
   customName: { fontFamily: serif, fontSize: 12, fontWeight: '700', color: '#2A2410', marginBottom: 4 },
   customInputs: { flexDirection: 'row', gap: 8 },
   customField: { flex: 1 },
-  typeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 8 },
+  typeRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: 8 },
   typeChip: {
     borderWidth: 1,
     borderColor: '#B8A85F',
@@ -2307,6 +2521,7 @@ const makeStyles = (p: ArchivePalette) =>
     summaryMeta: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, marginTop: 4 },
 
     fieldLabel: { fontFamily: serif, color: p.inkFaint, fontSize: 13, fontWeight: '600', marginBottom: 8 },
+    fieldHint: { fontFamily: serif, color: p.inkFaint, fontSize: 11, fontStyle: 'italic', marginTop: -4, marginBottom: 10 },
     slotsHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
     addSlot: { flexDirection: 'row', alignItems: 'center', gap: 2, marginBottom: 8 },
     addSlotText: { fontFamily: serif, color: p.gold, fontSize: 13, fontWeight: '700' },

@@ -10,6 +10,7 @@ SecureAIExam/
 ├── server/        Node.js crypto service — sealing, co-sign, print ceremony, forensics
 ├── ai-service/    Python FastAPI (uvicorn) — fingerprinting & anomaly detection
 ├── supabase/      Postgres schema: RLS, hash-chained audit, realtime triggers
+├── monitoring/    Prometheus + Grafana stack (optional) — metrics from server/ and ai-service/
 └── docs/          Architecture documentation
 ```
 
@@ -128,6 +129,22 @@ Then run the lifecycle — ideally with two devices/emulators side by side to se
 11. **Admin** → *Audit* → see the hash-chained, tamper-evident record of everything that just happened.
 
 ---
+
+## 6. Monitoring (optional): Prometheus + Grafana
+
+Both backend services expose Prometheus metrics at `GET /metrics` — request rate/latency/errors, plus business events (paper sealed/co-signed/printed, copies scanned, CRITICAL unscanned-copy alerts, PDF-extraction engine used, fingerprint ops, custody anomaly scores).
+
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/). With the crypto service (step 2) and AI service (step 3) already running natively on your host:
+
+```powershell
+cd monitoring
+docker compose up -d
+```
+
+- **Prometheus** (scrapes `host.docker.internal:4000/metrics` and `:8080/metrics` every 5s): [http://localhost:9090](http://localhost:9090)
+- **Grafana**, pre-provisioned with the Prometheus datasource and a "SecureAIExam" dashboard: [http://localhost:3001](http://localhost:3001) (login `admin` / `admin`)
+
+`docker compose down` to stop. This only monitors the Node/Python services — the mobile app and Supabase aren't instrumented.
 
 ## Troubleshooting
 

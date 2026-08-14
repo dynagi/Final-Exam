@@ -22,7 +22,9 @@ import { serif } from '../../lib/theme';
 import { Role, ROLE_LABEL } from '../../lib/types';
 import type { AuthStackParamList } from '../../navigation/RootNavigator';
 
-const ROLES: Role[] = ['teacher', 'paper_setter', 'admin'];
+// Admin is not self-serve: there is no signup path to a new admin account,
+// so it is not offered here (server/src/index.js rejects it outright too).
+const ROLES: Role[] = ['teacher', 'paper_setter'];
 
 export default function SignUpScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
@@ -70,7 +72,7 @@ export default function SignUpScreen() {
                 <View style={pageStyles.center}>
                   <BookBadge icon="person-add" gradient={['#2F6B3F', '#5FA876']} glowColor="#2F6B3F" />
                   <Text style={pageStyles.title}>Join Secure Exam</Text>
-                  <Text style={pageStyles.subtitle}>Create Your Account{'\n'}Roles are provisioned invite-only in production</Text>
+                  <Text style={pageStyles.subtitle}>Create Your Account{'\n'}An admin must approve it before you can sign in</Text>
                   <View style={pageStyles.flexSpace} />
                   <QuillAndScroll />
                 </View>
@@ -94,7 +96,8 @@ export default function SignUpScreen() {
                   <View style={pageStyles.demoBanner}>
                     <Ionicons name="information-circle-outline" size={14} color={INK_DIM} />
                     <Text style={pageStyles.demoText}>
-                      Demo mode: roles are self-selected. In production, accounts are provisioned invite-only.
+                      Teacher and paper-setter accounts need an admin&apos;s approval before they can sign in.
+                      Admin accounts are provisioned directly and cannot be created here.
                     </Text>
                   </View>
 

@@ -23,12 +23,15 @@ import io
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from PIL import Image
+from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Histogram, generate_latest
 from pydantic import BaseModel
 
 SECRET = os.getenv("AI_SECRET", "demo-ai-secret")
@@ -45,6 +48,59 @@ app = FastAPI(title="SecureAIExam AI Service", version="1.0.0")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
+
+# --------------------------- Prometheus metrics -------------------------------
+# Scraped by Prometheus and visualized in Grafana (see /monitoring at repo root).
+
+METRICS = CollectorRegistry()
+HTTP_REQUESTS_TOTAL = Counter(
+    "secureaiexam_ai_http_requests_total",
+    "Total HTTP requests",
+    ["method", "route", "status"],
+    registry=METRICS,
+)
+HTTP_REQUEST_DURATION = Histogram(
+    "secureaiexam_ai_http_request_duration_seconds",
+    "HTTP request duration in seconds",
+    ["method", "route", "status"],
+    buckets=(0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5, 10),
+    registry=METRICS,
+)
+FINGERPRINT_OPS_TOTAL = Counter(
+    "secureaiexam_fingerprint_ops_total",
+    "Fingerprint operations, by op",
+    ["op"],
+    registry=METRICS,
+)
+EXTRACT_ENGINE_TOTAL = Counter(
+    "secureaiexam_extract_engine_total",
+    "PDF question-extraction runs, by engine used",
+    ["engine"],
+    registry=METRICS,
+)
+ANOMALY_SCORE = Histogram(
+    "secureaiexam_anomaly_score",
+    "Custody anomaly scores returned by /anomaly/check",
+    buckets=(0.0, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0),
+    registry=METRICS,
+)
+
+
+@app.middleware("http")
+async def prometheus_middleware(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = route.path if route else request.url.path
+    labels = {"method": request.method, "route": path, "status": response.status_code}
+    HTTP_REQUEST_DURATION.labels(**labels).observe(time.perf_counter() - start)
+    HTTP_REQUESTS_TOTAL.labels(**labels).inc()
+    return response
+
+
+@app.get("/metrics")
+def metrics():
+    return Response(generate_latest(METRICS), media_type=CONTENT_TYPE_LATEST)
 
 
 class RegisterRequest(BaseModel):
@@ -157,6 +213,7 @@ def health():
 @app.post("/fingerprint/register")
 def register(req: RegisterRequest):
     """Called by the crypto service at print time, once per copy."""
+    FINGERPRINT_OPS_TOTAL.labels(op="register").inc()
     return {
         "copy_id": req.copy_id,
         "fingerprint_hash": fingerprint_hash(req.copy_id),
@@ -167,6 +224,7 @@ def register(req: RegisterRequest):
 @app.post("/fingerprint/embed")
 def embed(req: EmbedRequest):
     """Watermark a page image with the copy's invisible identity."""
+    FINGERPRINT_OPS_TOTAL.labels(op="embed").inc()
     image = _decode_image(req.image_base64)
     try:
         marked = embed_lsb(image, req.copy_id)
@@ -186,6 +244,7 @@ def embed(req: EmbedRequest):
 @app.post("/fingerprint/extract")
 def extract(req: ExtractRequest):
     """Recover the copy identity from a leaked image."""
+    FINGERPRINT_OPS_TOTAL.labels(op="extract").inc()
     image = _decode_image(req.image_base64)
     copy_id = extract_lsb(image)
     if not copy_id:
@@ -401,6 +460,7 @@ def extract_questions(req: ExtractQuestionsRequest):
         raw = parse_questions_offline(text)
 
     questions = [q for q in (_normalize_question(item) for item in raw) if q]
+    EXTRACT_ENGINE_TOTAL.labels(engine=engine).inc()
     return {
         "engine": engine,
         "pages": pages,
@@ -457,6 +517,7 @@ def anomaly_check(req: AnomalyRequest):
         flags.append("Chain incomplete: copy has not reached 'delivered'")
         score = max(score, 0.2)
 
+    ANOMALY_SCORE.observe(score)
     return {"score": round(score, 2), "flags": flags, "events_analyzed": len(req.events)}
 
 

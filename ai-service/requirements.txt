@@ -5,3 +5,4 @@ numpy>=1.26
 pydantic>=2.6
 pypdf>=4.2
 anthropic>=0.39
+prometheus-client>=0.20

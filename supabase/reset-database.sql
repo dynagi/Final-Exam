@@ -72,6 +72,7 @@ drop type if exists copy_status;
 drop type if exists paper_status;
 drop type if exists question_status;
 drop type if exists user_role;
+drop type if exists account_status;
 
 -- ---------- 5. Verify ----------
 -- Expect zero rows. Anything listed here was not removed.

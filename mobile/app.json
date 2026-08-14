@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "SecureAIExam",
-    "slug": "secure-ai-exam",
+    "slug": "exam",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.secureaiexam.app",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -21,8 +22,7 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
-      ],
-      "package": "com.anonymous.secureaiexam"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -35,6 +35,12 @@
           "cameraPermission": "SecureAIExam uses the camera to scan question-paper QR codes at the exam center."
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "e85a3942-6e5f-43af-a1a9-402f626a9e65"
+      }
+    },
+    "owner": "sarveshshimpi-org"
   }
 }

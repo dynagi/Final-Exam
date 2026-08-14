@@ -561,7 +561,6 @@ const REFERENCE_ONLY = [
   ['neet-pg', 'NEET PG', 'NBEMS', 'Medical / Health science', 'Computer Based Test', ['Medicine', 'Surgery', 'Obstetrics & Gynaecology', 'Preventive & Social Medicine', 'Pre-clinical', 'Para-clinical'], 'Verify subject grouping and marking against the current NBEMS information bulletin.'],
   ['ini-cet', 'INI-CET', 'AIIMS / Institutes of National Importance', 'Medical / Health science', 'Computer Based Test', ['Medicine', 'Surgery', 'Obstetrics & Gynaecology', 'Preventive & Social Medicine'], 'Duration and marking may be updated — check the current INI-CET prospectus.'],
   ['neet-ss', 'NEET SS', 'NBEMS', 'Medical / Health science', 'Computer Based Test', ['Super-speciality feeder subject'], 'Marking and subject grouping are defined by the current NEET-SS bulletin.'],
-  ['cuet-ug', 'CUET UG', 'National Testing Agency (NTA)', 'University entrance', 'Computer Based Test', ['Language', 'Domain subject', 'General Aptitude Test'], 'Candidates select their own subject combination, so there is no single fixed structure. Language/domain tests typically offer 50 questions with 40 to attempt; the General Aptitude Test offers 60 with 50 to attempt. Marking is +5 / −1.'],
   ['ailet-ug', 'AILET UG', 'National Law University Delhi', 'Law entrance', 'Offline / OMR', ['English', 'Current Affairs & GK', 'Logical Reasoning'], 'Negative marking applies; the annual question distribution is set by the NLU Delhi notification.'],
   ['cat', 'CAT', 'Indian Institutes of Management', 'Management entrance', 'Computer Based Test', ['VARC', 'DILR', 'Quantitative Ability'], 'MCQs are generally +3 / −1 and non-MCQ (TITA) questions carry no negative marking, but the question count and section timing change by year.'],
   ['xat', 'XAT', 'XLRI', 'Management entrance', 'Computer Based Test', ['Verbal Ability & Logical Reasoning', 'Decision Making', 'Quantitative Ability & Data Interpretation', 'General Knowledge'], 'Rules have changed over time — take the penalty and GK treatment from the current XAT bulletin.'],
@@ -570,31 +569,20 @@ const REFERENCE_ONLY = [
   ['ap-icet', 'AP ICET', 'APSCHE', 'Management entrance', 'Computer Based Test', ['Analytical Ability', 'Mathematical Ability', 'Communication Ability'], 'The current state notification governs the exact pattern.'],
   ['ts-icet', 'TS ICET', 'Telangana Council', 'Management entrance', 'Computer Based Test', ['Analytical Ability', 'Mathematical Ability', 'Communication Ability'], 'The current state notification governs the exact pattern.'],
   ['mah-mba-cet', 'MAH MBA/MMS CET', 'State CET Cell, Maharashtra', 'Management entrance', 'Computer Based Test', ['Logical Reasoning', 'Abstract Reasoning', 'Quantitative Aptitude', 'Verbal Ability / Reading Comprehension'], 'The current CET Cell bulletin governs the exact pattern.'],
-  ['upsc-ese', 'UPSC Engineering Services (ESE)', 'Union Public Service Commission', 'Civil services', 'Objective + conventional', ['General Studies & Engineering Aptitude', 'Civil Engineering', 'Mechanical Engineering', 'Electrical Engineering', 'Electronics & Telecommunication'], 'Objective preliminary papers plus a conventional/descriptive main paper; negative marking values are in the current notification.'],
-  ['upsc-cds-ima', 'UPSC CDS (IMA / INA / AFA)', 'Union Public Service Commission', 'Defence', 'Offline / OMR', ['English', 'General Knowledge', 'Elementary Mathematics'], 'Negative marking applies to the objective papers; followed by the SSB interview.'],
+  ['upsc-cds-ima', 'UPSC CDS (IMA / INA / AFA)', 'Union Public Service Commission', 'Defence', 'Offline / OMR', ['English', 'General Knowledge', 'Elementary Mathematics'], 'Negative marking applies to the objective papers; followed by the SSB interview. All three written papers are sat the same day, in different shifts.'],
   ['upsc-cds-ota', 'UPSC CDS (OTA)', 'Union Public Service Commission', 'Defence', 'Offline / OMR', ['English', 'General Knowledge'], 'Negative marking applies to the objective papers; followed by the SSB interview.'],
-  ['upsc-capf-ac', 'UPSC CAPF (AC)', 'Union Public Service Commission', 'Defence', 'Objective + descriptive', ['General Ability and Intelligence', 'General Studies, Essay and Comprehension'], 'Paper I is objective with negative marking; Paper II is descriptive.'],
+  ['upsc-capf-ac', 'UPSC CAPF (AC)', 'Union Public Service Commission', 'Defence', 'Objective + descriptive', ['General Ability and Intelligence', 'General Studies, Essay and Comprehension'], 'Paper I is objective with negative marking; Paper II is descriptive. Both papers are sat the same day, Paper I in the morning and Paper II in the afternoon.'],
   ['upsc-cms', 'UPSC Combined Medical Services', 'Union Public Service Commission', 'Medical / Health science', 'Computer Based Test', ['General Medicine', 'Paediatrics', 'Surgery', 'Gynaecology & Obstetrics', 'Preventive & Social Medicine'], 'Two objective papers totalling 500 marks, followed by a personality test.'],
   ['upsc-ifos', 'UPSC Indian Forest Service (Mains)', 'Union Public Service Commission', 'Civil services', 'Descriptive', ['General English', 'General Knowledge', 'Optional subject I', 'Optional subject II'], 'Screened through the CSE preliminary examination; the main examination is descriptive.'],
   ['ssc-chsl-tier-1', 'SSC CHSL — Tier I', 'Staff Selection Commission', 'SSC', 'Computer Based Test', ['English Language', 'General Intelligence', 'Quantitative Aptitude', 'General Awareness'], '100 MCQs / 200 marks with negative marking; the reference does not fix the per-subject split.'],
   ['ssc-mts', 'SSC MTS', 'Staff Selection Commission', 'SSC', 'Computer Based Test', ['Numerical and Mathematical Ability', 'Reasoning Ability and Problem Solving', 'General Awareness', 'English Language and Comprehension'], 'A two-session structure has been used recently; questions, marks and negative marking differ by session.'],
   ['ssc-cpo', 'SSC CPO', 'Staff Selection Commission', 'SSC', 'Computer Based Test', ['General Intelligence & Reasoning', 'General Knowledge & General Awareness', 'Quantitative Aptitude', 'English Comprehension'], 'Paper-I and Paper-II with a physical test in between; negative marking applies.'],
-  ['ssc-je', 'SSC JE', 'Staff Selection Commission', 'SSC', 'Objective + descriptive', ['General Intelligence & Reasoning', 'General Awareness', 'Civil Engineering', 'Electrical Engineering', 'Mechanical Engineering'], 'Paper-I is objective with negative marking; Paper-II is descriptive.'],
-  ['rrb-ntpc', 'RRB NTPC', 'Railway Recruitment Boards', 'Railways', 'Computer Based Test', ['General Awareness', 'Mathematics', 'General Intelligence & Reasoning'], 'CBT-1 and CBT-2 with 1/3 negative marking; question counts depend on the stage and notification.'],
-  ['rrb-je', 'RRB JE', 'Railway Recruitment Boards', 'Railways', 'Computer Based Test', ['Mathematics', 'General Intelligence & Reasoning', 'General Awareness', 'General Science', 'Technical Abilities'], 'CBT-1 and CBT-2 with 1/3 negative marking; later stages depend on the recruitment rules.'],
-  ['ibps-clerk', 'IBPS Clerk (CSA)', 'Institute of Banking Personnel Selection', 'Banking / Finance', 'Computer Based Test', ['English Language', 'Numerical Ability', 'Reasoning Ability', 'General / Financial Awareness', 'Quantitative Aptitude'], '0.25 negative marking per wrong objective answer; the exact structure follows the annual IBPS notification.'],
-  ['sbi-po', 'SBI PO', 'State Bank of India', 'Banking / Finance', 'Objective + descriptive', ['English Language', 'Quantitative Aptitude', 'Reasoning Ability', 'Data Analysis & Interpretation', 'General / Economy / Banking Awareness'], 'Prelims and mains objective papers plus descriptive English; negative marking applies to objective questions.'],
-  ['sbi-clerk', 'SBI Clerk', 'State Bank of India', 'Banking / Finance', 'Computer Based Test', ['English Language', 'Numerical Ability', 'Reasoning Ability', 'General / Financial Awareness', 'Quantitative Aptitude'], 'Typically 1/4 negative marking for wrong objective answers.'],
-  ['rbi-grade-b', 'RBI Grade B', 'Reserve Bank of India', 'Banking / Finance', 'Objective + descriptive', ['General Awareness', 'English Language', 'Quantitative Aptitude', 'Reasoning', 'Economic & Social Issues', 'Finance & Management'], 'Phase I is objective; Phase II mixes objective and descriptive papers.'],
-  ['sebi-grade-a', 'SEBI Grade A', 'Securities and Exchange Board of India', 'Banking / Finance', 'Objective + descriptive', ['English Language', 'Quantitative Aptitude', 'Reasoning', 'General Awareness', 'Stream-specific subject'], 'Marks and sections vary by stream and notification.'],
   ['csir-ugc-net', 'CSIR UGC NET', 'National Testing Agency (NTA)', 'Teaching / Research', 'Computer Based Test', ['Chemical Sciences', 'Earth, Atmospheric, Ocean & Planetary Sciences', 'Life Sciences', 'Mathematical Sciences', 'Physical Sciences'], 'Marking and question counts differ by subject and some sections carry negative marking — do not hard-code one common rule.'],
   ['nata', 'NATA', 'Council of Architecture', 'Design / Architecture', 'Objective + drawing', ['Drawing & Visual Aptitude', 'Cognitive Aptitude'], 'Components and marking follow the current Council of Architecture / NATA brochure.'],
   ['uceed', 'UCEED', 'IIT Bombay', 'Design / Architecture', 'Objective + drawing', ['Visualisation & Spatial Ability', 'Observation & Design Sensitivity', 'Analytical & Logical Reasoning', 'Drawing'], 'MCQ, MSQ, NAT and drawing components; negative marking differs by question type.'],
   ['nid-dat', 'NID DAT', 'National Institute of Design', 'Design / Architecture', 'Objective + subjective', ['Design Aptitude', 'Studio / Situational Test'], 'Prelims and mains; marking and question structure change by year.'],
   ['nift-entrance', 'NIFT Entrance (CAT + GAT)', 'National Institute of Fashion Technology', 'Design / Architecture', 'Objective + creative', ['Creative Ability Test', 'General Ability Test'], 'The exact pattern varies by programme and year; a situation test/interview may follow.'],
   ['jam', 'IIT JAM', 'IITs', 'Professional / Technical', 'Computer Based Test', ['Biotechnology', 'Chemistry', 'Economics', 'Geology', 'Mathematics', 'Mathematical Statistics', 'Physics'], 'MCQ, MSQ and NAT sections; MCQs carry negative marking while MSQ/NAT rules differ. Use the current JAM brochure.'],
-  ['ca-foundation', 'CA Foundation', 'ICAI', 'Professional / Technical', 'Objective + descriptive', ['Accounting', 'Business Laws', 'Quantitative Aptitude', 'Business Economics'], 'Objective and descriptive components depend on the paper and the current ICAI scheme; negative marking applies to specified objective portions.'],
-  ['ca-intermediate', 'CA Intermediate', 'ICAI', 'Professional / Technical', 'Objective + descriptive', ['Advanced Accounting', 'Corporate and Other Laws', 'Taxation', 'Cost and Management Accounting', 'Auditing and Ethics', 'Financial Management', 'Strategic Management'], 'Two groups of papers; marking varies by paper under the current ICAI scheme.'],
   ['icg-assistant-commandant', 'Indian Coast Guard — Assistant Commandant', 'Indian Coast Guard', 'Defence', 'Computer Based Test', ['General Awareness', 'English', 'Mathematics', 'Reasoning'], 'Stage structure varies by recruitment cycle; take the question and marking scheme from the current notification.'],
 ];
 
@@ -703,19 +691,6 @@ const BOARD_EXAMS = [
   ['ladakh-12', 'Ladakh Class 12 Higher Secondary Board Examination', 'Ladakh School Education Department — JKBOSE-linked arrangements', 12],
 ];
 
-/** A board exam row rendered into the shared reference-format row shape. */
-function boardExamRow([code, name, board, cls]) {
-  return [
-    code,
-    name,
-    board,
-    'School boards',
-    'Theory (pen & paper)',
-    BOARD_SUBJECTS[cls] ?? BOARD_SUBJECTS[12],
-    BOARD_NOTES[code] ?? BOARD_NOTE_DEFAULT,
-  ];
-}
-
 function buildReferenceFormat(row) {
   const [code, name, body, category, mode, subjects, note] = row;
   return {
@@ -735,6 +710,129 @@ function buildReferenceFormat(row) {
   };
 }
 
+/** "Social Science" -> "social-science", for building a per-subject format code. */
+function slugifySubject(subject) {
+  return String(subject)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+/**
+ * A board does not administer one combined paper across its subjects — CBSE,
+ * ICSE and every state board publish a subject-wise date sheet, and English,
+ * Mathematics, Science, Social Science etc. are each sat as their own
+ * separate paper on their own separate date (confirmed against the current
+ * CBSE 2026 date sheet). Modelling a board as ONE format with a subject per
+ * SECTION — as an entrance exam's combined paper does — would let the Admin
+ * schedule an exam that is one paper mixing English with Mathematics, which
+ * does not exist. Each (board, class, subject) is instead its own format: a
+ * single, un-sectioned paper for that one subject.
+ */
+function boardSubjectFormat([code, name, board, cls], subject) {
+  const note = BOARD_NOTES[code] ?? BOARD_NOTE_DEFAULT;
+  return {
+    code: `${code}-${slugifySubject(subject)}`,
+    name: `${name} — ${subject}`,
+    body: board,
+    category: 'School boards',
+    mode: 'Theory (pen & paper)',
+    source_url: null,
+    official_through: 2026,
+    enforced: false,
+    blueprint: {
+      duration_minutes: null,
+      sections: [sec(subject, subject, [], { free_form: true })],
+      notes: [
+        note,
+        'Boards examine each subject as its own separate paper on its own date, not a combined paper — this format is that one subject only.',
+        'The reference does not pin this pattern down, so per-section question quotas are not enforced for this format.',
+      ],
+    },
+  };
+}
+
+/**
+ * Exams administered as several SEPARATE dated papers rather than sections
+ * of one sitting — a bank's Prelims and Mains are weeks apart, CA
+ * Foundation's four papers fall on four different days, RRB's CBT-1 and
+ * CBT-2 are months apart. Bundling these as subject-sections of one format
+ * (the way a genuinely combined paper like JEE Advanced is modelled) would
+ * let the Admin schedule one paper mixing Prelims questions with Mains
+ * questions, which is not how the real exam runs. Each stage below is
+ * instead its own format — schedule each on its own real date.
+ *
+ * Every entry here was checked against the current-cycle (2026) official
+ * schedule before being split; where two papers of one stage ARE sat the
+ * same day (UPSC CDS's three papers, UPSC CAPF's Paper I/II, GATE's General
+ * Aptitude + discipline paper, UGC NET's Paper I/II), the exam is left as
+ * ONE format with those as sections — that already matches how the real
+ * exam runs, so splitting it further would be wrong in the other direction.
+ *
+ * [code, name, body, category, mode, stages, note]
+ * stages: the separate dated papers, in the order they are sat.
+ */
+const STAGED_EXAMS = [
+  ['sbi-po', 'SBI PO', 'State Bank of India', 'Banking / Finance', 'Objective + descriptive',
+    ['Prelims', 'Mains'],
+    'Prelims and Mains are held on separate dates, weeks apart (Prelims marks do not count toward the final merit list). Schedule each stage as its own exam on its own date.'],
+  ['sbi-clerk', 'SBI Clerk (Junior Associate)', 'State Bank of India', 'Banking / Finance', 'Computer Based Test',
+    ['Prelims', 'Mains'],
+    'Prelims and Mains are held on separate dates, weeks apart. Schedule each stage as its own exam on its own date.'],
+  ['ibps-clerk', 'IBPS Clerk (CSA)', 'Institute of Banking Personnel Selection', 'Banking / Finance', 'Computer Based Test',
+    ['Prelims', 'Mains'],
+    'Prelims (qualifying) and Mains (merit-based) are held on separate dates, weeks apart. Schedule each stage as its own exam on its own date.'],
+  ['rbi-grade-b', 'RBI Grade B', 'Reserve Bank of India', 'Banking / Finance', 'Objective + descriptive',
+    ['Phase 1', 'Phase 2'],
+    'Phase 1 (screening) and Phase 2 (Economic & Social Issues, Finance & Management, English writing) are held on separate dates, weeks apart. Schedule each stage as its own exam on its own date.'],
+  ['sebi-grade-a', 'SEBI Grade A', 'Securities and Exchange Board of India', 'Banking / Finance', 'Objective + descriptive',
+    ['Phase 1', 'Phase 2'],
+    'Phase 1 and Phase 2 are held on separate dates, weeks apart. Schedule each stage as its own exam on its own date.'],
+  ['upsc-ese', 'UPSC Engineering Services (ESE)', 'Union Public Service Commission', 'Civil services', 'Objective + conventional',
+    ['Prelims', 'Mains'],
+    'Prelims and Mains are held on separate dates, months apart (Mains itself runs Paper I in the morning and Paper II in the afternoon of the same day). Schedule each stage as its own exam on its own date.'],
+  ['ssc-je', 'SSC JE', 'Staff Selection Commission', 'SSC', 'Objective + descriptive',
+    ['Paper 1 (objective)', 'Paper 2 (descriptive)'],
+    'Paper 1 is a CBT screening stage; only those who clear it sit Paper 2, months later. Schedule each as its own exam on its own date.'],
+  ['rrb-ntpc', 'RRB NTPC', 'Railway Recruitment Boards', 'Railways', 'Computer Based Test',
+    ['CBT-1', 'CBT-2'],
+    'CBT-1 (screening) and CBT-2 are held on separate dates, months apart. Schedule each stage as its own exam on its own date.'],
+  ['rrb-je', 'RRB JE', 'Railway Recruitment Boards', 'Railways', 'Computer Based Test',
+    ['CBT-1', 'CBT-2'],
+    'CBT-1 (screening) and CBT-2 are held on separate dates, months apart. Schedule each stage as its own exam on its own date.'],
+  ['ca-foundation', 'CA Foundation', 'ICAI', 'Professional / Technical', 'Objective + descriptive',
+    ['Paper 1 — Accounting', 'Paper 2 — Business Laws', 'Paper 3 — Quantitative Aptitude', 'Paper 4 — Business Economics'],
+    'ICAI schedules the four papers on four different dates, roughly on alternate days. Schedule each paper as its own exam on its own date.'],
+  ['ca-intermediate', 'CA Intermediate', 'ICAI', 'Professional / Technical', 'Objective + descriptive',
+    [
+      'Group I — Advanced Accounting', 'Group I — Corporate and Other Laws', 'Group I — Taxation',
+      'Group II — Cost & Management Accounting', 'Group II — Auditing and Ethics', 'Group II — Financial Management & Strategic Management',
+    ],
+    'ICAI schedules Group I and Group II on separate date blocks (each group\'s papers on alternate days, the two groups weeks apart). Schedule each paper as its own exam on its own date.'],
+  ['cuet-ug', 'CUET UG', 'National Testing Agency (NTA)', 'University entrance', 'Computer Based Test',
+    ['Language Test', 'Domain Subject Test', 'General Test'],
+    'Candidates sit on whichever date and shift their chosen language/domain/general tests are scheduled — NTA publishes a subject-wise date sheet, not one common exam day. Language/domain tests offer 50 questions with 40 to attempt; the General Test offers 60 with 50 to attempt. Marking is +5 / −1. Schedule each test as its own exam on its own date.'],
+];
+
+/** A STAGED_EXAMS row rendered into one stage's standalone, un-sectioned format. */
+function stagedExamFormat([code, name, body, category, mode, , note], stage) {
+  return {
+    code: `${code}-${slugifySubject(stage)}`,
+    name: `${name} — ${stage}`,
+    body,
+    category,
+    mode,
+    source_url: null,
+    official_through: 2026,
+    enforced: false,
+    blueprint: {
+      duration_minutes: null,
+      sections: [sec(stage, name, [], { free_form: true })],
+      notes: [note, 'The reference does not pin this pattern down, so per-section question quotas are not enforced for this format.'],
+    },
+  };
+}
+
 /** code -> format, with `enforced` defaulted to true for the full blueprints. */
 const FORMATS = new Map();
 for (const f of ENFORCED) FORMATS.set(f.code, { ...f, enforced: true });
@@ -742,9 +840,20 @@ for (const row of REFERENCE_ONLY) {
   const f = buildReferenceFormat(row);
   FORMATS.set(f.code, f);
 }
-for (const exam of BOARD_EXAMS) {
-  const f = buildReferenceFormat(boardExamRow(exam));
-  FORMATS.set(f.code, f);
+for (const entry of BOARD_EXAMS) {
+  const cls = entry[3];
+  const subjects = BOARD_SUBJECTS[cls] ?? BOARD_SUBJECTS[12];
+  for (const subject of subjects) {
+    const f = boardSubjectFormat(entry, subject);
+    FORMATS.set(f.code, f);
+  }
+}
+for (const entry of STAGED_EXAMS) {
+  const stages = entry[5];
+  for (const stage of stages) {
+    const f = stagedExamFormat(entry, stage);
+    FORMATS.set(f.code, f);
+  }
 }
 
 /* -------------------------------- resolving -------------------------------- */
@@ -1112,6 +1221,13 @@ function slotCeiling(resolved, candidate, setCount, headroom = BANK_HEADROOM) {
  * unchecked, the Admin states the counts once at exam creation and the
  * result is enforced exactly like a published blueprint.
  *
+ * A section may carry more than one row — that is what makes a HYBRID
+ * section possible (e.g. a board's "Science" section holding both an
+ * MCQ/objective quota and a theoretical/subjective quota at their own marks
+ * and count), the same way the built-in GATE blueprint layers a 1-mark and a
+ * 2-mark tier inside one section. Two rows for the same section must still
+ * differ in (type, marks) — the same quota given twice is just a mistake.
+ *
  * `rows`: [{ name, subject?, question_type?, count, marks_correct, negative_marks? }]
  * Returns { blueprint } or { error }.
  */
@@ -1121,13 +1237,11 @@ function buildCustomBlueprint(resolved, rows) {
     return { error: 'Give at least one section a question count' };
   }
 
-  const sections = [];
-  const seen = new Set();
+  const order = [];
+  const byName = new Map();
   for (const [i, row] of rows.entries()) {
     const name = String(row?.name ?? '').trim();
-    if (!name) return { error: `Section ${i + 1} needs a name` };
-    if (seen.has(name)) return { error: `Duplicate section "${name}"` };
-    seen.add(name);
+    if (!name) return { error: `Row ${i + 1} needs a section name` };
 
     const count = Math.trunc(Number(row?.count));
     if (!Number.isFinite(count) || count < 1 || count > 1000) {
@@ -1155,12 +1269,23 @@ function buildCustomBlueprint(resolved, rows) {
     };
     requirement.display_label = requirementLabel(requirement);
 
-    sections.push({
-      name,
-      subject: String(row?.subject ?? name).trim() || name,
-      requirements: [requirement],
-    });
+    if (!byName.has(name)) {
+      byName.set(name, { name, subject: String(row?.subject ?? name).trim() || name, requirements: [] });
+      order.push(name);
+    }
+    const section = byName.get(name);
+    const clash = section.requirements.find(
+      (r) => r.question_type === type && Number(r.marks_correct) === marks
+    );
+    if (clash) {
+      return {
+        error: `${name}: ${TYPE_LABEL[type] ?? type} at ${marks} marks is listed more than once — combine those rows into one`,
+      };
+    }
+    section.requirements.push(requirement);
   }
+
+  const sections = order.map((name) => byName.get(name));
 
   const blueprint = {
     ...resolved,

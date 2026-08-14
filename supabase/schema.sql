@@ -38,12 +38,21 @@ begin
   create type alert_severity as enum ('info', 'warning', 'critical');
 exception when duplicate_object then null;
 end $$;
+do $$
+begin
+  -- Teacher/paper-setter sign-ups need an Admin's approval before the
+  -- account can do anything; admin/invigilator profiles are never
+  -- self-serve, so they are created already 'approved'.
+  create type account_status as enum ('pending', 'approved', 'rejected');
+exception when duplicate_object then null;
+end $$;
 
 -- ---------- Tables ----------
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   full_name text not null default 'Unnamed',
   role user_role not null default 'teacher',
+  status account_status not null default 'approved',
   created_at timestamptz not null default now()
 );
 
@@ -321,12 +330,18 @@ create index if not exists idx_detections_trace on public.qr_detections (trace_c
 create index if not exists idx_detections_dedup on public.qr_detections (qr_token, scanner_id, last_detected_at desc);
 
 -- ---------- Helper: current user's role (SECURITY DEFINER avoids RLS recursion) ----------
+-- Returns null for a pending/rejected account, not just an unapproved role.
+-- Every RLS policy in this file gates on get_my_role() = '...' (or IN (...)),
+-- so a null here transparently locks a non-approved teacher/paper-setter out
+-- of every table those policies protect — the same gate the Node service
+-- enforces in requireRole(), now also closed at the database layer for
+-- direct supabase-js reads.
 create or replace function public.get_my_role()
 returns user_role
 language sql stable security definer
 set search_path = public
 as $$
-  select role from public.profiles where id = auth.uid();
+  select role from public.profiles where id = auth.uid() and status = 'approved';
 $$;
 
 -- ---------- Auto-create profile on signup ----------
@@ -335,12 +350,16 @@ returns trigger
 language plpgsql security definer
 set search_path = public
 as $$
+declare
+  v_role user_role;
 begin
-  insert into public.profiles (id, full_name, role)
+  v_role := coalesce((new.raw_user_meta_data ->> 'role')::user_role, 'teacher');
+  insert into public.profiles (id, full_name, role, status)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', 'Unnamed'),
-    coalesce((new.raw_user_meta_data ->> 'role')::user_role, 'teacher')
+    v_role,
+    case when v_role in ('teacher', 'paper_setter') then 'pending' else 'approved' end
   );
   return new;
 end;

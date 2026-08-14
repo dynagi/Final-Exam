@@ -28,6 +28,7 @@ const {
   BANK_HEADROOM,
   slotCeiling,
 } = require('./examFormats');
+const { register: metricsRegister, httpMetricsMiddleware, auditEventsTotal, criticalAlertsTotal } = require('./metrics');
 
 const {
   SUPABASE_URL,
@@ -41,6 +42,13 @@ const {
   // Unset means only signed-in admins/invigilators may report a sighting.
   DETECTOR_KEY = '',
 } = process.env;
+
+// An exam's earliest slot must start at least this many days out (not
+// "tomorrow" — printing, sealing and delivery all take real time) and no
+// more than this many years out (a "scheduled" exam should be a real one,
+// not a placeholder decades away).
+const MIN_SCHEDULE_LEAD_DAYS = 2;
+const MAX_SCHEDULE_LEAD_YEARS = 1;
 
 for (const [name, value] of Object.entries({ SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SERVER_SECRET })) {
   if (!value || value.includes('YOUR-PROJECT') || value === 'change-me-to-a-long-random-string') {
@@ -59,6 +67,7 @@ const app = express();
 app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json({ limit: '15mb' }));
+app.use(httpMetricsMiddleware);
 
 /* ----------------------------- crypto helpers ----------------------------- */
 
@@ -269,6 +278,7 @@ const REQUIRED_COLUMNS = [
   ['papers', 'set_label', 'patch-6-paper-sets.sql'],
   ['paper_copies', 'trace_code', 'patch-7-qr-watermark.sql'],
   ['qr_detections', 'qr_token', 'patch-8-qr-detections.sql'],
+  ['profiles', 'status', 'patch-9-account-approval.sql'],
 ];
 
 /** Turns a PostgREST "column not found" message into an actionable instruction. */
@@ -316,6 +326,19 @@ function requireRole(...roles) {
 
       const { data: profile } = await db.from('profiles').select('*').eq('id', data.user.id).single();
       if (!profile) return res.status(403).json({ error: 'No profile for this user' });
+      // Teacher / paper-setter accounts start 'pending' and cannot use the
+      // service at all until an Admin approves them (admin/invigilator
+      // profiles are never self-serve, so they are created already
+      // 'approved' — see patch-9-account-approval.sql).
+      if (profile.status && profile.status !== 'approved') {
+        return res.status(403).json({
+          error:
+            profile.status === 'rejected'
+              ? 'This account was not approved by an admin.'
+              : 'This account is awaiting admin approval.',
+          account_status: profile.status,
+        });
+      }
       if (roles.length && !roles.includes(profile.role)) {
         return res.status(403).json({ error: `Role '${profile.role}' may not perform this action` });
       }
@@ -337,11 +360,17 @@ async function audit(actorId, action, entity, entityId, details) {
     p_details: details ?? {},
   });
   if (error) console.error('audit write failed:', error.message);
+  auditEventsTotal.inc({ action });
 }
 
 /* --------------------------------- routes --------------------------------- */
 
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'crypto-service' }));
+
+app.get('/metrics', async (_req, res) => {
+  res.set('Content-Type', metricsRegister.contentType);
+  res.end(await metricsRegister.metrics());
+});
 
 /**
  * Sign-up via the service-role admin API. The user is created with
@@ -349,9 +378,20 @@ app.get('/health', (_req, res) => res.json({ ok: true, service: 'crypto-service'
  * which means the built-in mailer's rate limit (~2 emails/hour) can
  * never block sign-ups. The profile row is created by the
  * on_auth_user_created trigger from the metadata.
+ *
+ * Admin is deliberately NOT a self-serve role: there is no signup path to a
+ * new admin account, so every admin in the system was provisioned directly
+ * against the database. Invigilator accounts are likewise never created
+ * here — they come from POST /api/centers.
+ *
+ * Teacher and paper_setter accounts are created 'pending' (see the
+ * on_auth_user_created trigger in patch-9-account-approval.sql) and cannot
+ * use the service until an Admin approves them via POST
+ * /api/accounts/:id/approve — requireRole() enforces that on every route.
+ *
  * Body: { fullName, email, password, role }
  */
-const SIGNUP_ROLES = ['teacher', 'paper_setter', 'admin'];
+const SIGNUP_ROLES = ['teacher', 'paper_setter'];
 app.post('/api/auth/signup', async (req, res, next) => {
   try {
     const { fullName, email, password, role } = req.body || {};
@@ -379,9 +419,83 @@ app.post('/api/auth/signup', async (req, res, next) => {
       return res.status(status).json({ error: error.message });
     }
 
-    await audit(data.user.id, 'USER_SIGNUP', 'profile', data.user.id, { role });
+    await audit(data.user.id, 'USER_SIGNUP', 'profile', data.user.id, { role, status: 'pending' });
 
-    res.json({ ok: true, user_id: data.user.id });
+    res.json({ ok: true, user_id: data.user.id, status: 'pending' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Accounts awaiting admin approval (teachers & paper setters only — admin
+ * and invigilator profiles are never self-serve, so they never appear here).
+ */
+app.get('/api/accounts/pending', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { data, error } = await db
+      .from('profiles')
+      .select('id, full_name, role, status, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json({ ok: true, accounts: data ?? [] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Approve a pending teacher/paper-setter sign-up. Admin-only. */
+app.post('/api/accounts/:id/approve', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { data: account } = await db.from('profiles').select('*').eq('id', req.params.id).single();
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+    if (account.status !== 'pending') {
+      return res.status(409).json({ error: `Account is already '${account.status}'` });
+    }
+
+    const { data: updated, error } = await db
+      .from('profiles')
+      .update({ status: 'approved' })
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    await audit(req.user.id, 'ACCOUNT_APPROVED', 'profile', req.params.id, {
+      full_name: account.full_name,
+      role: account.role,
+    });
+
+    res.json({ ok: true, account: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Reject a pending sign-up. Deletes the auth account outright (the profile
+ * row cascades with it) — a declined sign-up is not a real user of the
+ * system, so there is nothing worth keeping around as 'rejected'.
+ * Admin-only.
+ */
+app.post('/api/accounts/:id/reject', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { data: account } = await db.from('profiles').select('*').eq('id', req.params.id).single();
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+    if (account.status !== 'pending') {
+      return res.status(409).json({ error: `Account is already '${account.status}'` });
+    }
+
+    const { error } = await db.auth.admin.deleteUser(req.params.id);
+    if (error) throw error;
+
+    await audit(req.user.id, 'ACCOUNT_REJECTED', 'profile', req.params.id, {
+      full_name: account.full_name,
+      role: account.role,
+    });
+
+    res.json({ ok: true });
   } catch (err) {
     next(err);
   }
@@ -534,12 +648,33 @@ app.post('/api/exams', requireRole('admin'), async (req, res, next) => {
     if (!Array.isArray(slots) || slots.length === 0) {
       return res.status(400).json({ error: 'At least one slot is required' });
     }
+    let earliestSlotStart = Infinity;
     for (const [i, s] of slots.entries()) {
       const start = Date.parse(s?.startAt);
       const end = Date.parse(s?.endAt);
       if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
         return res.status(400).json({ error: `Slot ${i + 1}: end time must be after start time` });
       }
+      earliestSlotStart = Math.min(earliestSlotStart, start);
+    }
+
+    // A paper cannot be readied — banked, composed, sealed, co-signed,
+    // printed and delivered to a center — on short notice, and a date too far
+    // out is not a real exam yet. Window: at least 2 days from now, at most 1
+    // year from now.
+    const now = new Date();
+    const earliestAllowed = new Date(now.getTime() + MIN_SCHEDULE_LEAD_DAYS * 24 * 60 * 60 * 1000);
+    const latestAllowed = new Date(now);
+    latestAllowed.setFullYear(latestAllowed.getFullYear() + MAX_SCHEDULE_LEAD_YEARS);
+    if (earliestSlotStart < earliestAllowed.getTime()) {
+      return res.status(400).json({
+        error: `An exam must be scheduled at least ${MIN_SCHEDULE_LEAD_DAYS} days from now — earliest allowed is ${earliestAllowed.toISOString().slice(0, 10)}.`,
+      });
+    }
+    if (earliestSlotStart > latestAllowed.getTime()) {
+      return res.status(400).json({
+        error: `An exam cannot be scheduled more than ${MAX_SCHEDULE_LEAD_YEARS} year${MAX_SCHEDULE_LEAD_YEARS === 1 ? '' : 's'} from now — latest allowed is ${latestAllowed.toISOString().slice(0, 10)}.`,
+      });
     }
 
     // An exam without an enforceable blueprint cannot police its papers, so
@@ -2139,6 +2274,7 @@ async function reconcileCenters() {
           type: 'UNSCANNED_COPIES',
           message: `Center ${center.name} (${center.code}): ${unscanned} of ${total} copies UNSCANNED ~${RECONCILE_WINDOW_MIN} min before exam start`,
         });
+        criticalAlertsTotal.inc({ type: 'UNSCANNED_COPIES' });
         await audit(null, 'RECONCILE_UNSCANNED', 'exam_center', center.id, {
           center: center.name,
           unscanned,

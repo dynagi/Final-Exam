@@ -1,9 +1,13 @@
 export type Role = 'teacher' | 'paper_setter' | 'admin' | 'invigilator';
 
+/** Teacher/paper-setter sign-ups start 'pending'; admin/invigilator are always 'approved'. */
+export type AccountStatus = 'pending' | 'approved' | 'rejected';
+
 export interface Profile {
   id: string;
   full_name: string;
   role: Role;
+  status: AccountStatus;
   created_at: string;
 }
 

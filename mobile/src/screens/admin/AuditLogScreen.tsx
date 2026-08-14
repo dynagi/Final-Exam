@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useMemo, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArchiveBackground,
@@ -9,15 +9,15 @@ import {
   ArchiveIndexOverlay,
   ArchivePalette,
   ArchiveSidebar,
-  OpenBook,
+  FlipBook,
+  FlipBookHandle,
   PageScroll,
   PageTitle,
   Rule,
-  TurnButton,
   useArchiveLayout,
   useArchivePalette,
-  usePageTurn,
 } from '../../components/ArchiveBook';
+import { BookArrow, PageIndicator } from '../../components/ArchiveUpload';
 import { EmptyState } from '../../components/UI';
 import { shortHash, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
@@ -39,7 +39,7 @@ export default function AuditLogScreen() {
 
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [spread, setSpread] = useState(0);
-  const pageTurn = usePageTurn({ duration: 750, angle: 82 });
+  const book = useRef<FlipBookHandle>(null);
 
   const load = useCallback(async () => {
     const { data } = await supabase
@@ -68,48 +68,52 @@ export default function AuditLogScreen() {
   const leftEntries = entries.slice(start, start + PER_LEAF);
   const rightEntries = entries.slice(start + PER_LEAF, start + PER_SPREAD);
 
-  const turnTo = (next: number) => {
-    if (next < 0 || next >= spreadCount || next === current) return;
-    pageTurn.turn(next > current ? 1 : -1, () => setSpread(next));
-  };
-
-  const leftPage = (
-    <PageScroll>
-      <PageTitle center size={[19, 27]}>
-        Audit Log
-      </PageTitle>
-      <View style={styles.banner}>
-        <Ionicons name="link" size={14} color={p.gold} />
-        <Text style={styles.bannerText}>
-          Hash-chained & append-only: every entry&apos;s hash covers the previous one. Tampering
-          with any record breaks every hash after it.
-        </Text>
-      </View>
-      <Rule ornament gap={12} />
-      {leftEntries.length === 0 ? (
-        <EmptyState
-          icon="reader-outline"
-          title="No audit entries yet"
-          subtitle="Every seal, co-sign, print and custody scan is recorded here permanently."
-        />
-      ) : (
-        leftEntries.map((entry) => <AuditEntryRow key={entry.id} entry={entry} palette={p} />)
-      )}
-    </PageScroll>
-  );
-
-  const rightPage = (
-    <PageScroll>
-      <PageTitle center size={[19, 27]}>
-        Continued
-      </PageTitle>
-      <Rule ornament gap={12} />
-      {rightEntries.length === 0 ? (
-        <Text style={styles.emptyNote}>No further entries on this spread.</Text>
-      ) : (
-        rightEntries.map((entry) => <AuditEntryRow key={entry.id} entry={entry} palette={p} />)
-      )}
-    </PageScroll>
+  const renderSide = useCallback(
+    (spreadIndex: number, side: 'left' | 'right') => {
+      const base = spreadIndex * PER_SPREAD + (side === 'right' ? PER_LEAF : 0);
+      const rows = entries.slice(base, base + PER_LEAF);
+      if (side === 'left') {
+        return (
+          <PageScroll>
+            <PageTitle center size={[19, 27]}>
+              Audit Log
+            </PageTitle>
+            <View style={styles.banner}>
+              <Ionicons name="link" size={14} color={p.gold} />
+              <Text style={styles.bannerText}>
+                Hash-chained & append-only: every entry&apos;s hash covers the previous one.
+                Tampering with any record breaks every hash after it.
+              </Text>
+            </View>
+            <Rule ornament gap={12} />
+            {rows.length === 0 ? (
+              <EmptyState
+                icon="reader-outline"
+                title="No audit entries yet"
+                subtitle="Every seal, co-sign, print and custody scan is recorded here permanently."
+              />
+            ) : (
+              rows.map((entry) => <AuditEntryRow key={entry.id} entry={entry} palette={p} />)
+            )}
+          </PageScroll>
+        );
+      }
+      return (
+        <PageScroll>
+          <PageTitle center size={[19, 27]}>
+            Continued
+          </PageTitle>
+          <Rule ornament gap={12} />
+          {rows.length === 0 ? (
+            <Text style={styles.emptyNote}>No further entries on this spread.</Text>
+          ) : (
+            rows.map((entry) => <AuditEntryRow key={entry.id} entry={entry} palette={p} />)
+          )}
+        </PageScroll>
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entries, p, styles]
   );
 
   return (
@@ -129,36 +133,44 @@ export default function AuditLogScreen() {
 
         <View style={[styles.stage, { paddingHorizontal: outerPad }]}>
           <View style={styles.bookArea}>
-            <View style={styles.arrowRow}>
-              <TurnButton
-                direction="prev"
-                label="Previous audit spread"
-                disabled={current <= 0}
-                onPress={() => turnTo(current - 1)}
-              />
-              <View style={styles.flex} />
-              <TurnButton
-                direction="next"
-                label="Next audit spread"
-                disabled={current >= spreadCount - 1}
-                onPress={() => turnTo(current + 1)}
-              />
+            <View style={styles.bookRow}>
+              <View style={styles.arrowSlot}>
+                <BookArrow
+                  direction="prev"
+                  label="Previous audit spread"
+                  disabled={current <= 0}
+                  onPress={() => book.current?.prev()}
+                />
+              </View>
+
+              <View style={styles.bookWrap}>
+                <FlipBook
+                  ref={book}
+                  spread={current}
+                  spreadCount={spreadCount}
+                  onSpread={setSpread}
+                  renderSide={renderSide}
+                  leftFolio={`Entries ${entries.length ? start + 1 : 0}–${start + leftEntries.length}`}
+                  rightFolio={
+                    rightEntries.length
+                      ? `Entries ${start + PER_LEAF + 1}–${start + PER_LEAF + rightEntries.length}`
+                      : 'End of spread'
+                  }
+                />
+              </View>
+
+              <View style={styles.arrowSlot}>
+                <BookArrow
+                  direction="next"
+                  label="Next audit spread"
+                  disabled={current >= spreadCount - 1}
+                  onPress={() => book.current?.next()}
+                />
+              </View>
             </View>
 
-            <Animated.View style={pageTurn.style}>
-              <OpenBook
-                left={leftPage}
-                right={rightPage}
-                leftFolio={`Entries ${entries.length ? start + 1 : 0}–${start + leftEntries.length}`}
-                rightFolio={rightEntries.length ? `Entries ${start + PER_LEAF + 1}–${start + PER_LEAF + rightEntries.length}` : 'End of spread'}
-              />
-              <Animated.View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.turnShade, pageTurn.shadeStyle]} />
-            </Animated.View>
-
             <View style={styles.pageIndicator}>
-              <Text style={styles.pageIndicatorText}>
-                Page {current + 1} out of {spreadCount}
-              </Text>
+              <PageIndicator page={current + 1} pageCount={spreadCount} onGo={(n) => book.current?.goTo(n - 1)} />
             </View>
           </View>
         </View>
@@ -203,19 +215,13 @@ function AuditEntryRow({ entry, palette: p }: { entry: AuditEntry; palette: Arch
 
 const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    flex: { flex: 1 },
     screen: { flex: 1, backgroundColor: p.backdrop },
     body: { flex: 1, flexDirection: 'row' },
     stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
     bookArea: { width: '100%', alignItems: 'center' },
-    arrowRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      width: '100%',
-      maxWidth: 1180,
-      marginBottom: 10,
-      paddingHorizontal: 4,
-    },
+    bookRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, width: '100%', maxWidth: 1180 },
+    arrowSlot: { paddingTop: 14 },
+    bookWrap: { flex: 1, alignItems: 'center' },
 
     banner: {
       flexDirection: 'row',
@@ -247,13 +253,5 @@ const makeStyles = (p: ArchivePalette) =>
       marginTop: 20,
     },
 
-    turnShade: { borderRadius: 4 },
     pageIndicator: { alignItems: 'center', marginTop: 12 },
-    pageIndicatorText: {
-      fontFamily: serif,
-      fontSize: 11.5,
-      fontWeight: '700',
-      letterSpacing: 1,
-      color: p.inkDim,
-    },
   });

@@ -1187,7 +1187,7 @@ export function BookButton({
   title: string;
   icon?: keyof typeof Ionicons.glyphMap;
   onPress: () => void;
-  variant?: 'ghost' | 'gold';
+  variant?: 'ghost' | 'gold' | 'danger';
   disabled?: boolean;
   loading?: boolean;
   compact?: boolean;
@@ -1201,6 +1201,12 @@ export function BookButton({
   const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -2] });
 
   const gold = variant === 'gold';
+  const danger = variant === 'danger';
+  // Gold keeps its established look (gold icon, ink text) — only the new
+  // danger variant tints both icon and text the same way, so a Reject-style
+  // action reads unmistakably as destructive.
+  const accent = danger ? p.danger : gold ? p.gold : null;
+  const textColor = danger ? p.danger : gold ? p.ink : p.inkDim;
   return (
     <Animated.View style={{ transform: [{ translateY }] }}>
       <Pressable
@@ -1221,17 +1227,17 @@ export function BookButton({
           styles.bookBtn,
           compact && styles.bookBtnCompact,
           {
-            backgroundColor: gold ? `${p.gold}26` : p.pageShade,
-            borderColor: focused ? p.gold : gold ? p.gold : p.rule,
-            borderWidth: focused || gold ? 2 : 1,
+            backgroundColor: accent ? `${accent}26` : p.pageShade,
+            borderColor: focused ? (accent ?? p.gold) : (accent ?? p.rule),
+            borderWidth: focused || accent ? 2 : 1,
             opacity: off ? 0.42 : 1,
           },
         ]}
       >
         {icon ? (
-          <Ionicons name={loading ? 'hourglass-outline' : icon} size={14} color={gold ? p.gold : p.inkDim} />
+          <Ionicons name={loading ? 'hourglass-outline' : icon} size={14} color={accent ?? p.inkDim} />
         ) : null}
-        <Text style={[styles.bookBtnText, { color: gold ? p.ink : p.inkDim }]} numberOfLines={1}>
+        <Text style={[styles.bookBtnText, { color: textColor }]} numberOfLines={1}>
           {title}
         </Text>
       </Pressable>
