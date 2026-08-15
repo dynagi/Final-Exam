@@ -33,6 +33,7 @@ import { EmptyState, Input, Stepper } from '../../components/UI';
 import { showAlert } from '../../lib/alert';
 import { allocateCopies, provisionCenter, scanCopy } from '../../lib/api';
 import { fmtDateTime } from '../../lib/format';
+import { getScanLocation } from '../../lib/scanLocation';
 import { supabase } from '../../lib/supabase';
 import { serif } from '../../lib/theme';
 import { Exam, ExamCenter, ExamSlot } from '../../lib/types';
@@ -225,7 +226,8 @@ export default function CentersScreen() {
   const doScan = async (copy: CopyLite) => {
     setWorking(true);
     try {
-      const res = await scanCopy(copy.qr_payload);
+      const location = await getScanLocation();
+      const res = await scanCopy(copy.qr_payload, location ?? undefined);
       showAlert(
         'Scanned ✓',
         `Copy #${res.copy_number}${res.set_label ? ` ${res.set_label}` : ''} scanned in. Removed from pending.`

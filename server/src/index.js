@@ -250,6 +250,26 @@ function signQr(copyId, paperId, copyNumber) {
 }
 
 /**
+ * Pulls the scanning device's GPS fix off a scan request body, if present —
+ * the client captures it at the moment of the scan (copy scan-in, leak
+ * trace) and sends it alongside the QR payload. Returns an object spreadable
+ * straight into a custody_events insert; empty when the device declined
+ * location permission or sent nothing, so the column stays NULL rather than
+ * ever blocking the scan itself.
+ */
+function parseScanLocation(body) {
+  const lat = Number(body?.latitude);
+  const lng = Number(body?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return {};
+  const accuracy = Number(body?.location_accuracy_m);
+  return {
+    latitude: lat,
+    longitude: lng,
+    location_accuracy_m: Number.isFinite(accuracy) ? accuracy : null,
+  };
+}
+
+/**
  * Deterministic login email derived from a center code. The center login
  * screen builds the same address, so invigilators sign in with just their
  * code + password. Codes are therefore globally unique (the login id).
@@ -1882,6 +1902,7 @@ app.post('/api/forensics/identify', requireRole('admin'), async (req, res, next)
       trace_code: traceRaw,
       qr_payload: qrPayload,
     } = req.body || {};
+    const scanLocation = parseScanLocation(req.body);
     let via = 'copy id';
 
     // A watermark scan: either the bare 12-char trace code, or a full
@@ -1959,6 +1980,7 @@ app.post('/api/forensics/identify', requireRole('admin'), async (req, res, next)
       location: 'Forensic identification',
       note: `Identified via ${via}`,
       actor_id: req.user.id,
+      ...scanLocation,
     });
 
     const { data: chain } = await db
@@ -2340,6 +2362,7 @@ app.post('/api/centers/:id/allocate', requireRole('admin'), async (req, res, nex
 app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, res, next) => {
   try {
     const { qr_payload: qrPayload, copy_id: copyIdRaw } = req.body || {};
+    const scanLocation = parseScanLocation(req.body);
     let copyId = copyIdRaw;
 
     if (!copyId && qrPayload) {
@@ -2414,6 +2437,7 @@ app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, re
       location: center ? `${center.name} (${center.code}) — scan-in` : 'Invigilator scan-in',
       note: 'QR verified, scanned in at center',
       actor_id: req.user.id,
+      ...scanLocation,
     });
 
     // Notify the admin in real time that a copy was scanned at a center.

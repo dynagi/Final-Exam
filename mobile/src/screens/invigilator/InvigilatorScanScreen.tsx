@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { scanCopy } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
+import { getScanLocation } from '../../lib/scanLocation';
 import { supabase } from '../../lib/supabase';
 import { radius, spacing, ThemeColors } from '../../lib/theme';
 import { ExamCenter } from '../../lib/types';
@@ -49,7 +50,8 @@ export default function InvigilatorScanScreen() {
       if (!text || busy) return;
       setBusy(true);
       try {
-        const res = await scanCopy(text);
+        const location = await getScanLocation();
+        const res = await scanCopy(text, location ?? undefined);
         setLog((prev) => [
           {
             ts: new Date().toISOString(),

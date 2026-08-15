@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Animated,
   FlatList,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -32,7 +33,8 @@ import { Badge, Button, Card, EmptyState, Input } from '../../components/UI';
 import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { identifyLeak } from '../../lib/api';
-import { shortHash, timeAgo } from '../../lib/format';
+import { fmtLatLng, mapsUrl, shortHash, timeAgo } from '../../lib/format';
+import { getScanLocation } from '../../lib/scanLocation';
 import { supabase } from '../../lib/supabase';
 import { radius, serif, spacing, ThemeColors } from '../../lib/theme';
 import { CopyStatus, CustodyEvent, PaperCopy } from '../../lib/types';
@@ -211,12 +213,16 @@ export default function CustodyScreen() {
     setTracing(true);
     setTraceResult(null);
     try {
+      const location = await getScanLocation();
       // A photo (or scan) may yield the header QR, the plain watermark code,
       // or a per-question tracing QR (SAE:<trace><page><question><tag>) —
       // the server figures out which.
-      const res = await identifyLeak(
-        code.startsWith('{') ? { qr_payload: code } : { trace_code: code }
-      );
+      const res = await identifyLeak({
+        ...(code.startsWith('{') ? { qr_payload: code } : { trace_code: code }),
+        ...(location
+          ? { latitude: location.latitude, longitude: location.longitude, location_accuracy_m: location.accuracy ?? undefined }
+          : {}),
+      });
       setTraceResult({
         via: res.via,
         copyNumber: res.copy.copy_number,
@@ -296,11 +302,27 @@ export default function CustodyScreen() {
                 A critical alert has been pushed to every admin dashboard.
               </Text>
               <Text style={styles.traceChainTitle}>Chain of custody</Text>
-              {traceResult.chain.map((event) => (
-                <Text key={event.id} style={styles.traceChain}>
-                  · {event.event_type} — {event.location} ({timeAgo(event.created_at)})
-                </Text>
-              ))}
+              {traceResult.chain.map((event) => {
+                const gps = fmtLatLng(event.latitude, event.longitude, event.location_accuracy_m);
+                return (
+                  <View key={event.id}>
+                    <Text style={styles.traceChain}>
+                      · {event.event_type} — {event.location} ({timeAgo(event.created_at)})
+                    </Text>
+                    {gps ? (
+                      <Pressable
+                        accessibilityRole="link"
+                        accessibilityLabel="Open scan location in Maps"
+                        onPress={() => void Linking.openURL(mapsUrl(event.latitude as number, event.longitude as number))}
+                        style={styles.gpsRow}
+                      >
+                        <Ionicons name="location" size={11} color={colors.accent} />
+                        <Text style={styles.gpsText}>{gps}</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+                );
+              })}
             </Card>
           ) : null}
         </ScrollView>
@@ -337,6 +359,19 @@ export default function CustodyScreen() {
                 {item.copy?.paper?.set_label ? ` ${item.copy.paper.set_label}` : ''} · {item.location}
               </Text>
               {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
+              {item.latitude != null && item.longitude != null ? (
+                <Pressable
+                  accessibilityRole="link"
+                  accessibilityLabel="Open scan location in Maps"
+                  onPress={() => void Linking.openURL(mapsUrl(item.latitude as number, item.longitude as number))}
+                  style={styles.gpsRow}
+                >
+                  <Ionicons name="location" size={12} color={colors.accent} />
+                  <Text style={styles.gpsText}>
+                    {fmtLatLng(item.latitude, item.longitude, item.location_accuracy_m)}
+                  </Text>
+                </Pressable>
+              ) : null}
               <View style={styles.hashRow}>
                 <Ionicons name="link" size={12} color={colors.textDim} />
                 <Text style={styles.hash}>
@@ -629,6 +664,18 @@ const makeStyles = (colors: ThemeColors) =>
       color: colors.textDim,
       fontSize: 12,
       marginTop: 4,
+    },
+    gpsRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      marginTop: 4,
+    },
+    gpsText: {
+      color: colors.accent,
+      fontSize: 11.5,
+      fontWeight: '600',
+      textDecorationLine: 'underline',
     },
     hashRow: {
       flexDirection: 'row',

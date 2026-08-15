@@ -317,6 +317,9 @@ export const identifyLeak = (body: {
   qr_payload?: string;
   copy_id?: string;
   image_base64?: string;
+  latitude?: number;
+  longitude?: number;
+  location_accuracy_m?: number;
 }) =>
   post('/api/forensics/identify', body) as unknown as Promise<{
     ok: boolean;
@@ -361,8 +364,16 @@ export const fetchDetections = (limit = 50) =>
   }>;
 
 /** Invigilator scan-in: verify a copy's QR and mark it scanned. */
-export const scanCopy = (qrPayload: string) =>
-  post('/api/copies/scan', { qr_payload: qrPayload }) as Promise<{
+export const scanCopy = (
+  qrPayload: string,
+  location?: { latitude: number; longitude: number; accuracy: number | null }
+) =>
+  post('/api/copies/scan', {
+    qr_payload: qrPayload,
+    latitude: location?.latitude,
+    longitude: location?.longitude,
+    location_accuracy_m: location?.accuracy ?? undefined,
+  }) as Promise<{
     ok: boolean;
     copy_number: number;
     set_label: string | null;

@@ -20,3 +20,19 @@ export function shortHash(hash: string | null): string {
 export function shortId(id: string): string {
   return id.slice(0, 8);
 }
+
+/** "12.9716, 77.5946 (±15m)" — null when the scan carried no GPS fix. */
+export function fmtLatLng(
+  lat: number | null | undefined,
+  lng: number | null | undefined,
+  accuracyM?: number | null
+): string | null {
+  if (lat == null || lng == null) return null;
+  const coords = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  return accuracyM != null ? `${coords} (±${Math.round(accuracyM)}m)` : coords;
+}
+
+/** Google Maps link for a scan's captured coordinates. */
+export function mapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps?q=${lat},${lng}`;
+}

@@ -168,6 +168,10 @@ export interface CustodyEvent {
   prev_hash: string | null;
   hash: string | null;
   created_at: string;
+  /** The scanning device's GPS fix at scan time — null if denied/unavailable. */
+  latitude: number | null;
+  longitude: number | null;
+  location_accuracy_m: number | null;
   copy?: { copy_number: number; paper_id: string } | null;
 }
 

@@ -20,7 +20,7 @@ import {
 } from '../../components/ArchiveBook';
 import { BookArrow, PageIndicator } from '../../components/ArchiveUpload';
 import { EmptyState, CeremonyModal } from '../../components/UI';
-import { Seal } from '../../components/ArchiveControls';
+import { KeyBlackboard, Seal } from '../../components/ArchiveControls';
 import PaperPreview from '../../components/PaperPreview';
 import { useAuth } from '../../context/AuthContext';
 import { showAlert } from '../../lib/alert';
@@ -77,6 +77,12 @@ export default function MyPapersScreen() {
   const [spread, setSpread] = useState(0);
   const book = useRef<FlipBookHandle>(null);
 
+  // Blackboard popup announcing a paper that just got the Admin's
+  // co-signature — surfaced once, the moment cosigned_at first appears.
+  const [cosignNotice, setCosignNotice] = useState<Paper | null>(null);
+  const prevPapersRef = useRef<Paper[]>([]);
+  const initializedRef = useRef(false);
+
   const load = useCallback(async () => {
     if (!setterId) return;
     const { data } = await supabase
@@ -86,6 +92,17 @@ export default function MyPapersScreen() {
       .order('created_at', { ascending: false });
     const rows = (data as Paper[] | null) ?? [];
     setPapers(rows);
+
+    // Detect a draft→cosigned transition since the last load — skipped on the
+    // very first load so reopening the screen with already-cosigned papers
+    // doesn't spuriously pop the board.
+    if (initializedRef.current) {
+      const prevById = new Map(prevPapersRef.current.map((pp) => [pp.id, pp]));
+      const justCosigned = rows.find((pp) => pp.cosigned_at && !prevById.get(pp.id)?.cosigned_at);
+      if (justCosigned) setCosignNotice(justCosigned);
+    }
+    initializedRef.current = true;
+    prevPapersRef.current = rows;
 
     // Show each draft's per-section progress against its exam format.
     const reports = await Promise.all(
@@ -392,6 +409,16 @@ export default function MyPapersScreen() {
         busy={sealing}
         onSubmit={(values) => void handleSeal(values)}
         onClose={() => setSealTarget(null)}
+      />
+
+      <KeyBlackboard
+        visible={!!cosignNotice}
+        title="Paper Co-Signed 🛡️"
+        subtitle={`"${cosignNotice?.title ?? ''}" now carries both key shares. Dual control is active — it cannot be decrypted without both your passphrase and the Admin's. It's ready for the two-person print ceremony.`}
+        fields={[]}
+        submitLabel="Got it"
+        onSubmit={() => setCosignNotice(null)}
+        onClose={() => setCosignNotice(null)}
       />
     </View>
   );

@@ -21,7 +21,9 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.CAMERA",
-        "android.permission.RECORD_AUDIO"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -33,6 +35,12 @@
         "expo-camera",
         {
           "cameraPermission": "SecureAIExam uses the camera to scan question-paper QR codes at the exam center."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "SecureAIExam records the device's location at the moment a QR is scanned, so every scan's location is on record."
         }
       ]
     ],
