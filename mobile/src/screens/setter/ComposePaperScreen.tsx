@@ -32,6 +32,7 @@ import ScrollAlert, { ScrollAlertContent } from '../../components/ScrollAlert';
 import { CeremonyModal } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
 import { showAlert } from '../../lib/alert';
+import { dedupeQuestions } from '../../lib/dedupeQuestions';
 import {
   confirmPaperPreview,
   fetchExamSets,
@@ -113,7 +114,9 @@ export default function ComposePaperScreen() {
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
     );
-    setPool(rows);
+    // Two teachers on the same subject can submit the same question by
+    // accident — collapse it to one entry so the setter never sees it twice.
+    setPool(dedupeQuestions(rows));
     setPoolError(error ? error.message : null);
   }, [examId]);
 

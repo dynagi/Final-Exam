@@ -756,6 +756,9 @@ export interface KeyField {
   key: string;
   label: string;
   placeholder?: string;
+  /** Masks input as a passphrase. Defaults to true — most board fields are keys. */
+  secure?: boolean;
+  keyboardType?: 'default' | 'number-pad';
 }
 
 /**
@@ -900,7 +903,8 @@ export function KeyBlackboard({
                     onChangeText={(text) => setValues((prev) => ({ ...prev, [field.key]: text }))}
                     placeholder={field.placeholder}
                     placeholderTextColor="rgba(255,255,255,0.28)"
-                    secureTextEntry
+                    secureTextEntry={field.secure ?? true}
+                    keyboardType={field.keyboardType ?? 'default'}
                     autoCapitalize="none"
                     style={styles.boardInput}
                   />

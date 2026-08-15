@@ -51,7 +51,11 @@ export default function InvigilatorScanScreen() {
       try {
         const res = await scanCopy(text);
         setLog((prev) => [
-          { ts: new Date().toISOString(), ok: true, text: `Copy #${res.copy_number} scanned in ✓` },
+          {
+            ts: new Date().toISOString(),
+            ok: true,
+            text: `Copy #${res.copy_number}${res.set_label ? ` ${res.set_label}` : ''} scanned in ✓`,
+          },
           ...prev,
         ]);
       } catch (e) {

@@ -80,8 +80,15 @@ async function patch(path: string, body: Record<string, unknown>): Promise<Recor
  * pre-confirmed, so no confirmation email is sent and Supabase's mailer
  * rate limit can never block it.
  */
-export const signUpUser = (role: Role, fullName: string, email: string, password: string) =>
-  request('/api/auth/signup', { role, fullName, email, password }) as Promise<{
+/** `domains` — exactly 2 subjects — is required when role is 'paper_setter'. */
+export const signUpUser = (
+  role: Role,
+  fullName: string,
+  email: string,
+  password: string,
+  domains?: string[]
+) =>
+  request('/api/auth/signup', { role, fullName, email, password, domains }) as Promise<{
     ok: boolean;
     user_id: string;
     status: 'pending';
@@ -98,6 +105,19 @@ export const approveAccount = (id: string) =>
 
 /** Declines the sign-up and deletes the account outright. */
 export const rejectAccount = (id: string) => post(`/api/accounts/${id}/reject`, {});
+
+/* ------------------------------ setter domains ------------------------------ */
+
+/** Every approved paper setter and the subject domains they hold. */
+export const fetchApprovedSetters = () =>
+  get('/api/accounts/setters') as unknown as Promise<{ ok: boolean; setters: Profile[] }>;
+
+/** Grants an approved paper setter one or more additional subject domains. */
+export const addSetterDomains = (id: string, subjects: string[]) =>
+  post(`/api/accounts/${id}/domains`, { subjects }) as unknown as Promise<{
+    ok: boolean;
+    domains: string[];
+  }>;
 
 /* ------------------------- exam formats & composition --------------------- */
 
@@ -273,12 +293,17 @@ export const provisionCenter = (body: {
     login: { code: string; email: string };
   }>;
 
-/** Allocate up to `count` unallocated copies of an exam's paper to a center. */
-export const allocateCopies = (centerId: string, count: number) =>
-  post(`/api/centers/${centerId}/allocate`, { count }) as Promise<{
+/**
+ * Allocate up to `count` unallocated copies of an exam's paper to a center.
+ * Pass `setLabel` (e.g. "Set A") to draw only from that set's copies —
+ * otherwise copies from every set are pooled together.
+ */
+export const allocateCopies = (centerId: string, count: number, setLabel?: string) =>
+  post(`/api/centers/${centerId}/allocate`, { count, setLabel }) as Promise<{
     ok: boolean;
     allocated: number;
     requested: number;
+    set_label: string | null;
   }>;
 
 /**
@@ -340,6 +365,7 @@ export const scanCopy = (qrPayload: string) =>
   post('/api/copies/scan', { qr_payload: qrPayload }) as Promise<{
     ok: boolean;
     copy_number: number;
+    set_label: string | null;
     scanned_at: string;
   }>;
 

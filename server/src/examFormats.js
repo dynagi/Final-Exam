@@ -1532,6 +1532,16 @@ function buildPaperView({ paper, exam, resolved, questions }) {
   return view;
 }
 
+/**
+ * Every category a format belongs to (e.g. "Banking / Finance", "Defence") —
+ * the fixed list a paper setter picks their domains from at sign-up, and
+ * that an Admin grants more of later. See setter_domains,
+ * patch-10-setter-domains.sql.
+ */
+function listCategories() {
+  return Array.from(new Set(listFormats().map((f) => f.category))).sort();
+}
+
 module.exports = {
   YEARS,
   QUESTION_TYPES,
@@ -1540,6 +1550,7 @@ module.exports = {
   setLabels,
   buildCustomBlueprint,
   listFormats,
+  listCategories,
   resolveFormat,
   validateComposition,
   checkQuestionSlot,

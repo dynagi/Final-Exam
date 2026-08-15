@@ -26,6 +26,31 @@ import type { AuthStackParamList } from '../../navigation/RootNavigator';
 // so it is not offered here (server/src/index.js rejects it outright too).
 const ROLES: Role[] = ['teacher', 'paper_setter'];
 
+/**
+ * Every exam category (the same list an Admin schedules exams against — see
+ * ExamsScreen.tsx's "ARCHIVE INDEX"). A paper setter picks 2 at sign-up; an
+ * admin can grant more later. Exams outside a setter's domains never appear
+ * in their account.
+ */
+const SETTER_DOMAINS = [
+  'Banking / Finance',
+  'Civil services',
+  'Defence',
+  'Design / Architecture',
+  'Engineering / Science entrance',
+  'Law entrance',
+  'Management entrance',
+  'Medical / Health science',
+  'Professional / Technical',
+  'Railways',
+  'School boards',
+  'SSC',
+  'State entrance',
+  'Teaching / Research',
+  'University entrance',
+];
+const SETTER_DOMAIN_COUNT = 2;
+
 export default function SignUpScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signUp } = useAuth();
@@ -35,18 +60,30 @@ export default function SignUpScreen() {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [domains, setDomains] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  const toggleDomain = (d: string) => {
+    setDomains((prev) => {
+      if (prev.includes(d)) return prev.filter((x) => x !== d);
+      if (prev.length >= SETTER_DOMAIN_COUNT) return prev;
+      return [...prev, d];
+    });
+  };
 
   const handleSignUp = async () => {
     setError(null);
     if (!fullName.trim()) return setError('Enter your full name.');
     if (!email.trim()) return setError('Enter your email.');
     if (password.length < 8) return setError('Password must be at least 8 characters.');
+    if (role === 'paper_setter' && domains.length !== SETTER_DOMAIN_COUNT) {
+      return setError(`Choose exactly ${SETTER_DOMAIN_COUNT} subject domains.`);
+    }
 
     setBusy(true);
     try {
-      await signUp(role, fullName, email, password);
+      await signUp(role, fullName, email, password, role === 'paper_setter' ? domains : undefined);
       // Session is live; RootNavigator switches to the role's app.
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Sign up failed.');
@@ -100,6 +137,37 @@ export default function SignUpScreen() {
                       Admin accounts are provisioned directly and cannot be created here.
                     </Text>
                   </View>
+
+                  {role === 'paper_setter' ? (
+                    <View style={pageStyles.domainBlock}>
+                      <Text style={pageStyles.domainLabel}>
+                        Exam categories ({domains.length}/{SETTER_DOMAIN_COUNT}) — you&apos;ll only be able to
+                        set papers for exams in these categories. An admin can grant more later.
+                      </Text>
+                      <View style={pageStyles.domainRow}>
+                        {SETTER_DOMAINS.map((d) => {
+                          const active = domains.includes(d);
+                          const disabled = !active && domains.length >= SETTER_DOMAIN_COUNT;
+                          return (
+                            <Pressable
+                              key={d}
+                              onPress={() => toggleDomain(d)}
+                              disabled={disabled}
+                              style={[
+                                pageStyles.domainChip,
+                                active && pageStyles.domainChipActive,
+                                disabled && pageStyles.domainChipDisabled,
+                              ]}
+                            >
+                              <Text style={[pageStyles.domainChipText, active && pageStyles.domainChipTextActive]}>
+                                {d}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : null}
 
                   <BookInput icon="person-circle-outline" label="Full Name" placeholder="Dr. A. Sharma" value={fullName} onChangeText={setFullName} />
                   <BookInput
@@ -178,6 +246,21 @@ const pageStyles = StyleSheet.create({
     marginBottom: 14,
   },
   demoText: { fontFamily: serif, fontSize: 11, color: INK_DIM, flex: 1, lineHeight: 15 },
+  domainBlock: { marginBottom: 14 },
+  domainLabel: { fontFamily: serif, fontSize: 11.5, color: INK_DIM, marginBottom: 8, lineHeight: 16 },
+  domainRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  domainChip: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(59,46,31,0.25)',
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  domainChipActive: { borderColor: GOLD, backgroundColor: `${GOLD}26` },
+  domainChipDisabled: { opacity: 0.4 },
+  domainChipText: { fontFamily: serif, fontSize: 11.5, fontWeight: '700', color: INK_DIM },
+  domainChipTextActive: { color: INK },
   error: { fontFamily: serif, color: '#8B2E2E', fontSize: 12, marginBottom: 12 },
   sealWrap: { marginTop: 4, marginBottom: 18 },
   linkWrap: { alignItems: 'center' },

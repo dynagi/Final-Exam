@@ -1,11 +1,13 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,6 +15,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import WebQrScanner from '../../components/WebQrScanner';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArchiveBackground,
@@ -42,7 +45,9 @@ const PAGES = ['Live Feed', 'Copies', 'Leak Trace'] as const;
 type PageName = (typeof PAGES)[number];
 
 type CopyWithPaper = PaperCopy & { paper?: { title: string } | null };
-type EventWithCopy = CustodyEvent & { copy?: { copy_number: number; paper_id: string } | null };
+type EventWithCopy = CustodyEvent & {
+  copy?: { copy_number: number; paper_id: string; paper?: { set_label: string | null } | null } | null;
+};
 
 const NEXT_STEP: Partial<
   Record<CopyStatus, { next: CopyStatus; label: string; defaultLocation: string }>
@@ -103,11 +108,17 @@ export default function CustodyScreen() {
     chain: CustodyEvent[];
   } | null>(null);
 
+  // Live camera scan for a page's QR — either the header code or a
+  // per-question tracing code, both resolved by runTrace below.
+  const [scannerOpen, setScannerOpen] = useState(false);
+  const [permission, requestPermission] = useCameraPermissions();
+  const lastScanRef = useRef<{ data: string; at: number }>({ data: '', at: 0 });
+
   const load = useCallback(async () => {
     const [{ data: eventRows }, { data: copyRows }] = await Promise.all([
       supabase
         .from('custody_events')
-        .select('*, copy:paper_copies(copy_number, paper_id)')
+        .select('*, copy:paper_copies(copy_number, paper_id, paper:papers(set_label))')
         .order('created_at', { ascending: false })
         .limit(40),
       supabase
@@ -191,8 +202,8 @@ export default function CustodyScreen() {
    * leaked, which fires a CRITICAL alert to every admin dashboard via the
    * custody trigger, and returns the full chain of custody.
    */
-  const runTrace = async () => {
-    const code = traceInput.trim();
+  const runTrace = async (raw?: string) => {
+    const code = (raw ?? traceInput).trim();
     if (!code) {
       showAlert('Nothing to trace', 'Scan or type the code from the page watermark.');
       return;
@@ -200,9 +211,11 @@ export default function CustodyScreen() {
     setTracing(true);
     setTraceResult(null);
     try {
-      // A photo may yield either the tiled watermark code or the header QR.
+      // A photo (or scan) may yield the header QR, the plain watermark code,
+      // or a per-question tracing QR (SAE:<trace><page><question><tag>) —
+      // the server figures out which.
       const res = await identifyLeak(
-        code.trim().startsWith('{') ? { qr_payload: code } : { trace_code: code }
+        code.startsWith('{') ? { qr_payload: code } : { trace_code: code }
       );
       setTraceResult({
         via: res.via,
@@ -212,6 +225,7 @@ export default function CustodyScreen() {
         chain: res.custody_chain ?? [],
       });
       setTraceInput('');
+      setScannerOpen(false);
       void load();
     } catch (e) {
       showAlert('Could not trace', e instanceof Error ? e.message : 'Unknown error');
@@ -219,6 +233,17 @@ export default function CustodyScreen() {
       setTracing(false);
     }
   };
+
+  // Stable handler so the camera doesn't restart every time `tracing` flips.
+  const runTraceRef = useRef(runTrace);
+  runTraceRef.current = runTrace;
+  const handleTraceScan = useCallback((data: string) => {
+    const text = data.trim();
+    const now = Date.now();
+    if (!text || (text === lastScanRef.current.data && now - lastScanRef.current.at < 3000)) return;
+    lastScanRef.current = { data: text, at: now };
+    void runTraceRef.current(text);
+  }, []);
 
   const advance = NEXT_STEP[target?.status ?? 'delivered'];
 
@@ -235,10 +260,16 @@ export default function CustodyScreen() {
           <Card>
             <Text style={styles.traceTitle}>Identify a leaked copy</Text>
             <Text style={styles.traceBlurb}>
-              Every printed page is tiled with its own QR watermark, so a photo of any part of the
-              sheet identifies the copy. Scan one of the faint codes (or read the TRACE line in the
-              footer) and enter it here — the full header QR payload works too.
+              Every question carries its own QR beside its answer area, and the header carries the
+              full copy QR — either one identifies the copy. Scan the code (or read the TRACE line
+              in the footer) and enter it here.
             </Text>
+            <Button
+              title="Scan QR"
+              icon="camera-outline"
+              onPress={() => setScannerOpen(true)}
+              style={{ marginBottom: spacing.md }}
+            />
             <Input
               label="Trace code from the page"
               placeholder="SAE:ABCD2345EFGH"
@@ -302,7 +333,8 @@ export default function CustodyScreen() {
                 <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
               </View>
               <Text style={styles.eventText}>
-                Copy #{item.copy?.copy_number ?? '?'} · {item.location}
+                Copy #{item.copy?.copy_number ?? '?'}
+                {item.copy?.paper?.set_label ? ` ${item.copy.paper.set_label}` : ''} · {item.location}
               </Text>
               {item.note ? <Text style={styles.note}>{item.note}</Text> : null}
               <View style={styles.hashRow}>
@@ -488,6 +520,52 @@ export default function CustodyScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Live camera scan for a per-question or header QR, for leak tracing. */}
+      <Modal transparent visible={scannerOpen} animationType="fade" onRequestClose={() => setScannerOpen(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Scan a page's QR</Text>
+            <Text style={styles.modalSubtitle}>
+              Point the camera at the QR beside any question, or the one in the header.
+            </Text>
+
+            {Platform.OS === 'web' ? (
+              <View style={styles.scannerWrap}>
+                <WebQrScanner onScan={handleTraceScan} />
+              </View>
+            ) : !permission?.granted ? (
+              <>
+                <Text style={styles.terminal}>Camera access is needed to scan the QR.</Text>
+                <Button
+                  title="Grant camera access"
+                  icon="camera-outline"
+                  onPress={() => void requestPermission()}
+                  style={{ marginTop: spacing.sm }}
+                />
+              </>
+            ) : (
+              <View style={styles.scannerWrap}>
+                <CameraView
+                  style={StyleSheet.absoluteFill}
+                  facing="back"
+                  barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+                  onBarcodeScanned={({ data }) => handleTraceScan(data)}
+                />
+              </View>
+            )}
+
+            {tracing ? <Text style={styles.terminal}>Identifying…</Text> : null}
+
+            <Button
+              title="Close"
+              variant="ghost"
+              onPress={() => setScannerOpen(false)}
+              style={{ marginTop: spacing.sm }}
+            />
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -592,6 +670,12 @@ const makeStyles = (colors: ThemeColors) =>
       color: colors.textDim,
       fontSize: 13,
       marginBottom: spacing.lg,
+    },
+    scannerWrap: {
+      height: 280,
+      borderRadius: radius.lg,
+      overflow: 'hidden',
+      backgroundColor: '#000',
     },
   });
 

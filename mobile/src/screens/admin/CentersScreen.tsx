@@ -49,7 +49,10 @@ type CopyLite = {
   scanned_at: string | null;
   qr_payload: string;
   paper_id: string;
+  set_label: string | null;
 };
+
+type PaperLite = { id: string; set_label: string | null };
 
 export default function CentersScreen() {
   const { exams } = useScheduledExams();
@@ -64,6 +67,7 @@ export default function CentersScreen() {
   const [examId, setExamId] = useState<string | null>(null);
   const [centers, setCenters] = useState<ExamCenter[]>([]);
   const [slots, setSlots] = useState<ExamSlot[]>([]);
+  const [papers, setPapers] = useState<PaperLite[]>([]);
   const [copies, setCopies] = useState<CopyLite[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -83,6 +87,7 @@ export default function CentersScreen() {
   // Allocate + scan popups
   const [allocTarget, setAllocTarget] = useState<ExamCenter | null>(null);
   const [allocCount, setAllocCount] = useState('10');
+  const [allocSet, setAllocSet] = useState<string | null>(null);
   const [scanTarget, setScanTarget] = useState<ExamCenter | null>(null);
   const [working, setWorking] = useState(false);
 
@@ -91,27 +96,35 @@ export default function CentersScreen() {
       setCenters([]);
       setCopies([]);
       setSlots([]);
+      setPapers([]);
       return;
     }
     const [{ data: centerRows }, { data: slotRows }, { data: paperRows }] = await Promise.all([
       supabase.from('exam_centers').select('*').eq('exam_id', examId).order('starts_at', { ascending: true }),
       supabase.from('exam_slots').select('*').eq('exam_id', examId).order('slot_no', { ascending: true }),
-      supabase.from('papers').select('id').eq('exam_id', examId),
+      supabase.from('papers').select('id, set_label').eq('exam_id', examId),
     ]);
     setCenters((centerRows as ExamCenter[] | null) ?? []);
     setSlots((slotRows as ExamSlot[] | null) ?? []);
 
-    const paperIds = (paperRows as { id: string }[] | null)?.map((row) => row.id) ?? [];
+    const paperRowsList = (paperRows as PaperLite[] | null) ?? [];
+    setPapers(paperRowsList);
+    const paperIds = paperRowsList.map((row) => row.id);
     if (paperIds.length === 0) {
       setCopies([]);
       return;
     }
+    const setLabelByPaper = new Map(paperRowsList.map((row) => [row.id, row.set_label]));
     const { data: copyRows } = await supabase
       .from('paper_copies')
       .select('id, copy_number, center_id, scanned_at, qr_payload, paper_id')
       .in('paper_id', paperIds)
       .order('copy_number', { ascending: true });
-    setCopies((copyRows as CopyLite[] | null) ?? []);
+    const copiesWithSet = ((copyRows as Omit<CopyLite, 'set_label'>[] | null) ?? []).map((c) => ({
+      ...c,
+      set_label: setLabelByPaper.get(c.paper_id) ?? null,
+    }));
+    setCopies(copiesWithSet);
   }, [examId]);
 
   useFocusEffect(
@@ -139,6 +152,15 @@ export default function CentersScreen() {
 
   const unallocated = copies.filter((c) => !c.center_id).length;
   const forCenter = (id: string) => copies.filter((c) => c.center_id === id);
+
+  const availableSets = useMemo(() => {
+    const labels = new Set<string>();
+    for (const paper of papers) if (paper.set_label) labels.add(paper.set_label);
+    return Array.from(labels).sort();
+  }, [papers]);
+
+  const unallocatedForSet = (label: string | null) =>
+    copies.filter((c) => !c.center_id && (!label || c.set_label === label)).length;
 
   const openCreate = () => {
     setCName('');
@@ -169,7 +191,7 @@ export default function CentersScreen() {
       setCreating(false);
       showAlert(
         'Center created ✅',
-        `Login code: ${res.login.code}\nPassword: ${cPassword}\n\nShare these with the center. The invigilator signs in via "Exam center login" and scans QRs. Save the password now — it isn't shown again.`
+        `Login code: ${res.login.code}\n\nShare the code and the password you just set with the center. The invigilator signs in via "Exam center login" and scans QRs.`
       );
       void load();
     } catch (e) {
@@ -183,11 +205,15 @@ export default function CentersScreen() {
     if (!allocTarget) return;
     const count = parseInt(allocCount, 10);
     if (!count || count < 1) return showAlert('Invalid count', 'Enter how many copies to allocate.');
+    if (availableSets.length > 0 && !allocSet) return showAlert('Pick a set', 'Choose which paper set to allocate.');
     setWorking(true);
     try {
-      const res = await allocateCopies(allocTarget.id, count);
+      const res = await allocateCopies(allocTarget.id, count, allocSet ?? undefined);
       setAllocTarget(null);
-      showAlert('Allocated', `${res.allocated} copies allocated to ${allocTarget.name}.`);
+      showAlert(
+        'Allocated',
+        `${res.allocated} cop${res.allocated === 1 ? 'y' : 'ies'}${res.set_label ? ` (${res.set_label})` : ''} allocated to ${allocTarget.name}.`
+      );
       void load();
     } catch (e) {
       showAlert('Allocation failed', e instanceof Error ? e.message : 'Unknown error');
@@ -200,7 +226,10 @@ export default function CentersScreen() {
     setWorking(true);
     try {
       const res = await scanCopy(copy.qr_payload);
-      showAlert('Scanned ✓', `Copy #${res.copy_number} scanned in. Removed from pending.`);
+      showAlert(
+        'Scanned ✓',
+        `Copy #${res.copy_number}${res.set_label ? ` ${res.set_label}` : ''} scanned in. Removed from pending.`
+      );
       void load();
     } catch (e) {
       showAlert('Scan failed', e instanceof Error ? e.message : 'Unknown error');
@@ -291,6 +320,7 @@ export default function CentersScreen() {
                 onAllocate={(c) => {
                   setAllocTarget(c);
                   setAllocCount('10');
+                  setAllocSet(availableSets[0] ?? null);
                 }}
                 onScan={(c) => setScanTarget(c)}
                 palette={p}
@@ -331,9 +361,12 @@ export default function CentersScreen() {
       <AllocateBoard
         visible={!!allocTarget}
         centerName={allocTarget?.name ?? ''}
-        unallocated={unallocated}
+        unallocated={unallocatedForSet(allocSet)}
         count={allocCount}
         onCount={setAllocCount}
+        sets={availableSets}
+        selectedSet={allocSet}
+        onSelectSet={setAllocSet}
         busy={working}
         onSubmit={() => void doAllocate()}
         onClose={() => setAllocTarget(null)}
@@ -1060,6 +1093,9 @@ function AllocateBoard({
   unallocated,
   count,
   onCount,
+  sets,
+  selectedSet,
+  onSelectSet,
   busy,
   onSubmit,
   onClose,
@@ -1069,6 +1105,9 @@ function AllocateBoard({
   unallocated: number;
   count: string;
   onCount: (v: string) => void;
+  sets: string[];
+  selectedSet: string | null;
+  onSelectSet: (v: string | null) => void;
   busy: boolean;
   onSubmit: () => void;
   onClose: () => void;
@@ -1131,6 +1170,29 @@ function AllocateBoard({
             <Text style={boardStyles.subtitle} numberOfLines={1}>
               {centerName}
             </Text>
+
+            {sets.length > 0 ? (
+              <View style={boardStyles.setPicker}>
+                <Text style={boardStyles.setPickerLabel}>Which set?</Text>
+                <View style={boardStyles.setChips}>
+                  {sets.map((label) => {
+                    const active = selectedSet === label;
+                    return (
+                      <Pressable
+                        key={label}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Set ${label}`}
+                        accessibilityState={{ selected: active }}
+                        onPress={() => onSelectSet(label)}
+                        style={[boardStyles.setChip, active && boardStyles.setChipActive]}
+                      >
+                        <Text style={[boardStyles.setChipText, active && boardStyles.setChipTextActive]}>{label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
 
             <View style={boardStyles.pin}>
               <Ionicons name="pin" size={13} color="#C0392B" style={boardStyles.pinIcon} />
@@ -1234,13 +1296,16 @@ function OmrSheet({
                   <Pressable
                     key={copy.id}
                     accessibilityRole="button"
-                    accessibilityLabel={`Copy ${copy.copy_number}. ${scanned ? 'Scanned' : 'Not scanned'}`}
+                    accessibilityLabel={`Copy ${copy.copy_number}${copy.set_label ? ` ${copy.set_label}` : ''}. ${scanned ? 'Scanned' : 'Not scanned'}`}
                     accessibilityState={{ disabled: scanned || busy }}
                     disabled={scanned || busy}
                     onPress={() => onScan(copy)}
                     style={omrStyles.row}
                   >
-                    <Text style={omrStyles.copyLabel}>Copy {copy.copy_number}</Text>
+                    <Text style={omrStyles.copyLabel}>
+                      Copy {copy.copy_number}
+                      {copy.set_label ? ` ${copy.set_label}` : ''}
+                    </Text>
                     <View style={omrStyles.dots} />
                     <View style={omrStyles.bubbleGroup}>
                       <View style={omrStyles.bubbleUnit}>
@@ -1611,6 +1676,28 @@ const boardStyles = StyleSheet.create({
   },
   underline: { alignSelf: 'center', width: 70, height: 1, backgroundColor: '#FFFFFF', opacity: 0.4, marginTop: 7, marginBottom: 6 },
   subtitle: { fontFamily: serif, fontSize: 12, color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginBottom: 14 },
+  setPicker: { marginBottom: 14 },
+  setPickerLabel: {
+    fontFamily: serif,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  setChips: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 },
+  setChip: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.45)',
+    borderRadius: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+  },
+  setChipActive: { backgroundColor: '#F3E9C9', borderColor: '#F3E9C9' },
+  setChipText: { fontFamily: serif, fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },
+  setChipTextActive: { color: '#2A2410' },
   pin: {
     backgroundColor: '#F3E9C9',
     borderRadius: 2,

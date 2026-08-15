@@ -116,15 +116,25 @@ export default function AdminPapersScreen() {
     if (!printTarget) return;
     const setterPass = values.setterPassphrase ?? '';
     const adminPass = values.adminPassphrase ?? '';
+    const copies = parseInt(values.copies ?? '', 10);
+    const press = (values.press ?? '').trim();
 
     if (!setterPass || !adminPass) {
       showAlert('Two-person rule', 'Both the Setter and Admin passphrases are required.');
       return;
     }
+    if (!copies || copies < 1) {
+      showAlert('Invalid copy count', 'Enter how many copies to print (1 or more).');
+      return;
+    }
+    if (!press) {
+      showAlert('Missing press name', 'Enter the name of the printing press.');
+      return;
+    }
 
     setWorking(true);
     try {
-      const result = await printCopies(printTarget.id, setterPass, adminPass, 10, 'Central Government Press');
+      const result = await printCopies(printTarget.id, setterPass, adminPass, copies, press);
       setPrintTarget(null);
       setLastPrint(result);
       void load();
@@ -309,6 +319,19 @@ export default function AdminPapersScreen() {
         fields={[
           { key: 'setterPassphrase', label: "Paper Setter's paraphrase key" },
           { key: 'adminPassphrase', label: "Admin's paraphrase key" },
+          {
+            key: 'copies',
+            label: 'Number of copies to print',
+            placeholder: '10',
+            secure: false,
+            keyboardType: 'number-pad',
+          },
+          {
+            key: 'press',
+            label: 'Printing press name',
+            placeholder: 'Central Government Press',
+            secure: false,
+          },
         ]}
         submitLabel="Decrypt & Print Copies"
         busy={working}

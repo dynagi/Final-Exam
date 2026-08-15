@@ -233,7 +233,14 @@ function SetterTabs() {
       <Tabs.Screen
         name="MyPapers"
         component={MyPapersScreen}
-        options={{ title: 'My Papers', tabBarIcon: icon('documents-outline') }}
+        options={{
+          title: 'My Papers',
+          tabBarIcon: icon('documents-outline'),
+          // Now carries the archive header and index rail itself, same as
+          // the other setter tabs above.
+          headerShown: false,
+          tabBarStyle: { display: 'none' },
+        }}
       />
     </Tabs.Navigator>
   );

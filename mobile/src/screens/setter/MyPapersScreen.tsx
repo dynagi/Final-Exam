@@ -1,18 +1,41 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  ArchiveBackground,
+  ArchiveHeader,
+  ArchiveIndexOverlay,
+  ArchivePalette,
+  ArchiveSidebar,
+  FlipBook,
+  FlipBookHandle,
+  PageScroll,
+  PageTitle,
+  Rule,
+  fluid,
+  useArchiveLayout,
+  useArchivePalette,
+} from '../../components/ArchiveBook';
+import { BookArrow, PageIndicator } from '../../components/ArchiveUpload';
+import { EmptyState, CeremonyModal } from '../../components/UI';
+import { Seal } from '../../components/ArchiveControls';
 import PaperPreview from '../../components/PaperPreview';
-import { Badge, Button, Card, CeremonyModal, EmptyState, Screen } from '../../components/UI';
 import { useAuth } from '../../context/AuthContext';
-import { useTheme } from '../../context/ThemeContext';
 import { showAlert } from '../../lib/alert';
 import { confirmPaperPreview, previewPaper, sealPaper, validatePaper } from '../../lib/api';
 import { CompositionReport, sectionProgressLabel } from '../../lib/examFormats';
 import { fmtDateTime, timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
-import { spacing, ThemeColors } from '../../lib/theme';
+import { labelFor, serif } from '../../lib/theme';
 import { Paper, PaperView } from '../../lib/types';
+import { useSetterIndex } from './useSetterIndex';
+
+const SELF = 'MyPapers';
+/** Records per leaf — a spread (left + right) holds twice this many. */
+const PER_LEAF = 3;
+const PER_SPREAD = PER_LEAF * 2;
 
 const STATUS_HINT: Partial<Record<Paper['status'], string>> = {
   draft: 'Draft. Preview and confirm it to unlock sealing.',
@@ -21,11 +44,21 @@ const STATUS_HINT: Partial<Record<Paper['status'], string>> = {
   printed: 'Printed. Copies are under live chain-of-custody tracking.',
 };
 
+function statusTone(p: ArchivePalette, status: Paper['status']): string {
+  if (status === 'sealed') return p.warning;
+  if (status === 'sealed_dual') return p.info;
+  if (status === 'printed' || status === 'distributed' || status === 'completed') return p.success;
+  return p.inkFaint;
+}
+
 export default function MyPapersScreen() {
   const { profile } = useAuth();
   const setterId = profile?.id;
-  const { colors } = useTheme();
-  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const p = useArchivePalette();
+  const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
+  const insets = useSafeAreaInsets();
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const [indexOpen, setIndexOpen] = useState(false);
 
   const [papers, setPapers] = useState<Paper[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -41,6 +74,9 @@ export default function MyPapersScreen() {
   /** paper id -> its live composition report, for the draft progress lines. */
   const [drafts, setDrafts] = useState<Record<string, CompositionReport>>({});
 
+  const [spread, setSpread] = useState(0);
+  const book = useRef<FlipBookHandle>(null);
+
   const load = useCallback(async () => {
     if (!setterId) return;
     const { data } = await supabase
@@ -54,10 +90,10 @@ export default function MyPapersScreen() {
     // Show each draft's per-section progress against its exam format.
     const reports = await Promise.all(
       rows
-        .filter((p) => p.status === 'draft')
-        .map((p) =>
-          validatePaper(p.id)
-            .then((res) => [p.id, res.report] as const)
+        .filter((pp) => pp.status === 'draft')
+        .map((pp) =>
+          validatePaper(pp.id)
+            .then((res) => [pp.id, res.report] as const)
             .catch(() => null)
         )
     );
@@ -146,97 +182,188 @@ export default function MyPapersScreen() {
     }
   };
 
-  return (
-    <Screen>
-      <FlatList
-        data={papers}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={() => void onRefresh()}
-            tintColor={colors.text}
-          />
-        }
-        ListEmptyComponent={
-          <EmptyState
-            icon="documents-outline"
-            title="No papers yet"
-            subtitle="Compose a paper from the question pool to get started."
-          />
-        }
-        renderItem={({ item }) => (
-          <Card>
-            <View style={styles.header}>
-              <Text style={styles.title} numberOfLines={1}>
-                {item.title}
-              </Text>
-              <Badge status={item.status} />
-            </View>
-            <Text style={styles.meta}>
-              {item.exam?.name ? `${item.exam.name} · ` : ''}
-              {item.set_label ? `${item.set_label} · ` : ''}
-              {item.subject} · {item.question_count} questions · created {timeAgo(item.created_at)}
-            </Text>
+  const { items, onSelect } = useSetterIndex({
+    active: SELF,
+    onPreview: undefined,
+    onBeforeSelect: () => setIndexOpen(false),
+  });
 
-            {item.sealed_at ? (
-              <Text style={styles.timeline}>
-                <Ionicons name="lock-closed" size={12} color={colors.warning} /> Sealed{' '}
-                {fmtDateTime(item.sealed_at)}
-              </Text>
-            ) : null}
-            {item.cosigned_at ? (
-              <Text style={styles.timeline}>
-                <Ionicons name="shield-checkmark" size={12} color={colors.info} /> Co-signed{' '}
-                {fmtDateTime(item.cosigned_at)}
-              </Text>
-            ) : null}
+  const spreadCount = Math.max(1, Math.ceil(papers.length / PER_SPREAD));
+  const current = Math.min(spread, spreadCount - 1);
+  const start = current * PER_SPREAD;
+  const leftPapers = papers.slice(start, start + PER_LEAF);
+  const rightPapers = papers.slice(start + PER_LEAF, start + PER_SPREAD);
 
-            {STATUS_HINT[item.status] ? (
-              <Text style={styles.hint}>{STATUS_HINT[item.status]}</Text>
-            ) : null}
-
-            {item.status === 'draft' && drafts[item.id]?.enforced ? (
-              <View style={styles.progress}>
-                {drafts[item.id].sections.map((section) => (
+  const renderSide = useCallback(
+    (spreadIndex: number, side: 'left' | 'right') => {
+      const base = spreadIndex * PER_SPREAD + (side === 'right' ? PER_LEAF : 0);
+      const rows = papers.slice(base, base + PER_LEAF);
+      return (
+        <PageScroll>
+          <PageTitle center size={[19, 27]}>
+            {side === 'left' ? 'My Papers' : 'Continued'}
+          </PageTitle>
+          <Rule ornament gap={12} />
+          {rows.length === 0 ? (
+            side === 'left' && papers.length === 0 ? (
+              <EmptyState
+                icon="documents-outline"
+                title="No papers yet"
+                subtitle="Compose a paper from the question pool to get started."
+              />
+            ) : (
+              <Text style={styles.emptyNote}>No further papers on this spread.</Text>
+            )
+          ) : (
+            rows.map((item) => (
+              <View key={item.id} style={styles.card}>
+                <View style={styles.cardHead}>
                   <Text
-                    key={section.name}
-                    style={[
-                      styles.progressLine,
-                      { color: section.complete ? colors.success : colors.warning },
-                    ]}
+                    style={[styles.cardTitle, { fontSize: fluid(pageWidth, 12.5, 14) }]}
+                    numberOfLines={1}
                   >
-                    {sectionProgressLabel(section)}
+                    {item.title}
                   </Text>
-                ))}
-              </View>
-            ) : null}
+                  <Seal label={labelFor(item.status).toUpperCase()} tone={statusTone(p, item.status)} />
+                </View>
+                <Text style={styles.cardMeta}>
+                  {item.exam?.name ? `${item.exam.name} · ` : ''}
+                  {item.set_label ? `${item.set_label} · ` : ''}
+                  {item.subject} · {item.question_count} questions · created {timeAgo(item.created_at)}
+                </Text>
 
-            {item.status === 'draft' && (
-              <>
-                <Button
-                  title="Preview Paper"
-                  icon="eye-outline"
-                  onPress={() => void openPreview(item)}
-                  style={{ marginTop: spacing.md }}
-                />
-                {item.previewed_at ? (
-                  <Button
-                    title="Seal this paper (Share 1/2)"
-                    variant="ghost"
-                    icon="lock-closed-outline"
-                    onPress={() => setSealTarget(item)}
-                    style={{ marginTop: spacing.sm }}
-                  />
-                ) : (
-                  <Text style={styles.hint}>
-                    Sealing unlocks once you preview and confirm the paper.
+                {item.sealed_at ? (
+                  <Text style={styles.timeline}>
+                    <Ionicons name="lock-closed" size={12} color={p.warning} /> Sealed{' '}
+                    {fmtDateTime(item.sealed_at)}
                   </Text>
+                ) : null}
+                {item.cosigned_at ? (
+                  <Text style={styles.timeline}>
+                    <Ionicons name="shield-checkmark" size={12} color={p.info} /> Co-signed{' '}
+                    {fmtDateTime(item.cosigned_at)}
+                  </Text>
+                ) : null}
+
+                {STATUS_HINT[item.status] ? (
+                  <Text style={styles.hint}>{STATUS_HINT[item.status]}</Text>
+                ) : null}
+
+                {item.status === 'draft' && drafts[item.id]?.enforced ? (
+                  <View style={styles.progress}>
+                    {drafts[item.id].sections.map((section) => (
+                      <Text
+                        key={section.name}
+                        style={[
+                          styles.progressLine,
+                          { color: section.complete ? p.success : p.warning },
+                        ]}
+                      >
+                        {sectionProgressLabel(section)}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+
+                {item.status === 'draft' && (
+                  <>
+                    <ActionButton
+                      label="Preview Paper"
+                      icon="eye-outline"
+                      palette={p}
+                      onPress={() => void openPreview(item)}
+                    />
+                    {item.previewed_at ? (
+                      <ActionButton
+                        label="Seal this paper (Share 1/2)"
+                        icon="lock-closed-outline"
+                        palette={p}
+                        tone={p.gold}
+                        onPress={() => setSealTarget(item)}
+                      />
+                    ) : (
+                      <Text style={styles.hint}>
+                        Sealing unlocks once you preview and confirm the paper.
+                      </Text>
+                    )}
+                  </>
                 )}
-              </>
-            )}
-          </Card>
+              </View>
+            ))
+          )}
+        </PageScroll>
+      );
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    },
+    [papers, drafts, p, styles, pageWidth]
+  );
+
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]}>
+      <ArchiveBackground />
+      <ArchiveHeader
+        title="SECUREAI EXAM ARCHIVE"
+        shortTitle="ARCHIVE"
+        subtitle="Paper Setter · My Papers"
+        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+      />
+
+      <View style={styles.body}>
+        {sidebarMode === 'overlay' ? null : (
+          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
         )}
+
+        <View style={[styles.stage, { paddingHorizontal: outerPad }]}>
+          <View style={styles.bookArea}>
+            <View style={styles.bookRow}>
+              <View style={styles.arrowSlot}>
+                <BookArrow
+                  direction="prev"
+                  label="Previous papers spread"
+                  disabled={current <= 0}
+                  onPress={() => book.current?.prev()}
+                />
+              </View>
+
+              <View style={styles.bookWrap}>
+                <FlipBook
+                  ref={book}
+                  spread={current}
+                  spreadCount={spreadCount}
+                  onSpread={setSpread}
+                  renderSide={renderSide}
+                  leftFolio={`Papers ${papers.length ? start + 1 : 0}–${start + leftPapers.length}`}
+                  rightFolio={
+                    rightPapers.length
+                      ? `Papers ${start + PER_LEAF + 1}–${start + PER_LEAF + rightPapers.length}`
+                      : 'End of spread'
+                  }
+                />
+              </View>
+
+              <View style={styles.arrowSlot}>
+                <BookArrow
+                  direction="next"
+                  label="Next papers spread"
+                  disabled={current >= spreadCount - 1}
+                  onPress={() => book.current?.next()}
+                />
+              </View>
+            </View>
+
+            <View style={styles.pageIndicator}>
+              <PageIndicator page={current + 1} pageCount={spreadCount} onGo={(n) => book.current?.goTo(n - 1)} />
+            </View>
+          </View>
+        </View>
+      </View>
+
+      <ArchiveIndexOverlay
+        visible={indexOpen}
+        items={items}
+        activeRoute={SELF}
+        onSelect={onSelect}
+        onClose={() => setIndexOpen(false)}
       />
 
       <PaperPreview
@@ -266,40 +393,91 @@ export default function MyPapersScreen() {
         onSubmit={(values) => void handleSeal(values)}
         onClose={() => setSealTarget(null)}
       />
-    </Screen>
+    </View>
   );
 }
 
-const makeStyles = (colors: ThemeColors) =>
+/* ------------------------------ page pieces ------------------------------- */
+
+function ActionButton({
+  label,
+  icon,
+  onPress,
+  palette: p,
+  tone,
+}: {
+  label: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  palette: ArchivePalette;
+  tone?: string;
+}) {
+  const styles = useMemo(() => makeStyles(p), [p]);
+  const accent = tone ?? p.gold;
+  return (
+    <View style={[styles.actionBtn, { borderColor: accent }]}>
+      <Ionicons name={icon} size={13} color={accent} />
+      <Text style={[styles.actionBtnText, { color: accent }]} onPress={onPress}>
+        {label}
+      </Text>
+    </View>
+  );
+}
+
+/* --------------------------------- styles --------------------------------- */
+
+const makeStyles = (p: ArchivePalette) =>
   StyleSheet.create({
-    header: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      alignItems: 'center',
-      gap: spacing.sm,
-    },
-    title: {
-      color: colors.text,
-      fontSize: 15,
-      fontWeight: '700',
-      flex: 1,
-    },
-    meta: {
-      color: colors.textDim,
+    screen: { flex: 1, backgroundColor: p.backdrop },
+    body: { flex: 1, flexDirection: 'row' },
+    stage: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 14 },
+    bookArea: { width: '100%', alignItems: 'center' },
+    bookRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, width: '100%', maxWidth: 1180 },
+    arrowSlot: { paddingTop: 14 },
+    bookWrap: { flex: 1, alignItems: 'center' },
+    pageIndicator: { alignItems: 'center', marginTop: 12 },
+
+    emptyNote: {
+      fontFamily: serif,
       fontSize: 12,
-      marginTop: spacing.sm,
-    },
-    timeline: {
-      color: colors.textDim,
-      fontSize: 12,
-      marginTop: 4,
-    },
-    hint: {
-      color: colors.info,
-      fontSize: 12,
-      marginTop: spacing.sm,
+      color: p.inkFaint,
       fontStyle: 'italic',
+      textAlign: 'center',
+      marginTop: 20,
     },
-    progress: { marginTop: spacing.sm, gap: 2 },
-    progressLine: { fontSize: 12, fontWeight: '700' },
+
+    card: {
+      borderWidth: 1,
+      borderColor: p.rule,
+      backgroundColor: p.pageShade,
+      borderRadius: 3,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      marginBottom: 10,
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 2 },
+      shadowOpacity: 0.12,
+      shadowRadius: 5,
+      elevation: 1,
+    },
+    cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+    cardTitle: { flex: 1, fontFamily: serif, fontWeight: '700', color: p.ink },
+    cardMeta: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, marginTop: 5, lineHeight: 15 },
+    timeline: { fontFamily: serif, fontSize: 10.5, color: p.inkDim, marginTop: 4 },
+    hint: { fontFamily: serif, fontSize: 11, color: p.info, fontStyle: 'italic', marginTop: 8 },
+    progress: { marginTop: 8, gap: 2 },
+    progressLine: { fontFamily: serif, fontSize: 11, fontWeight: '700' },
+
+    actionBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      alignSelf: 'flex-start',
+      borderWidth: 1,
+      borderRadius: 3,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      marginTop: 9,
+    },
+    actionBtnText: { fontFamily: serif, fontSize: 11, fontWeight: '700', letterSpacing: 0.5 },
   });

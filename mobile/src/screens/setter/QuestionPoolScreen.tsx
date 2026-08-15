@@ -39,6 +39,7 @@ import {
   TeacherBlackboard,
 } from '../../components/ArchiveControls';
 import { showAlert } from '../../lib/alert';
+import { dedupeQuestions } from '../../lib/dedupeQuestions';
 import { fetchAll } from '../../lib/db';
 import { timeAgo } from '../../lib/format';
 import { supabase } from '../../lib/supabase';
@@ -107,7 +108,9 @@ export default function QuestionPoolScreen() {
         .order('created_at', { ascending: false })
         .order('id', { ascending: false })
     );
-    setQuestions(rows);
+    // Two teachers on the same subject can submit the same question by
+    // accident — collapse it to one entry so the setter approves it once.
+    setQuestions(dedupeQuestions(rows));
     setLoadError(error ? error.message : null);
   }, []);
 

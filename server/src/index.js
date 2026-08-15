@@ -20,6 +20,7 @@ const {
   MAX_PAPER_SETS,
   setLabels,
   listFormats,
+  listCategories,
   resolveFormat,
   validateComposition,
   checkQuestionSlot,
@@ -389,12 +390,20 @@ app.get('/metrics', async (_req, res) => {
  * use the service until an Admin approves them via POST
  * /api/accounts/:id/approve — requireRole() enforces that on every route.
  *
- * Body: { fullName, email, password, role }
+ * Body: { fullName, email, password, role, domains? }
+ * `domains` — exactly 2 exam categories, from the same fixed list the Admin
+ * schedules exams against (listCategories(), e.g. "Banking / Finance",
+ * "Defence") — is required when role is 'paper_setter'. This is what they'll
+ * set papers for: an exam outside a setter's domains never appears in their
+ * account (GET /api/exams/scheduled below, and enforced again server-side at
+ * POST /api/papers). Submitted for the same Admin approval as the account
+ * itself (see setter_domains, patch-10-setter-domains.sql).
  */
 const SIGNUP_ROLES = ['teacher', 'paper_setter'];
+const SETTER_DOMAIN_COUNT = 2;
 app.post('/api/auth/signup', async (req, res, next) => {
   try {
-    const { fullName, email, password, role } = req.body || {};
+    const { fullName, email, password, role, domains } = req.body || {};
     if (!fullName || !String(fullName).trim()) {
       return res.status(400).json({ error: 'Full name is required' });
     }
@@ -408,6 +417,21 @@ app.post('/api/auth/signup', async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid role' });
     }
 
+    let cleanDomains = [];
+    if (role === 'paper_setter') {
+      cleanDomains = Array.from(
+        new Set((Array.isArray(domains) ? domains : []).map((d) => String(d || '').trim()).filter(Boolean))
+      );
+      if (cleanDomains.length !== SETTER_DOMAIN_COUNT) {
+        return res.status(400).json({ error: `Choose exactly ${SETTER_DOMAIN_COUNT} exam categories` });
+      }
+      const validCategories = listCategories();
+      const unknown = cleanDomains.filter((d) => !validCategories.includes(d));
+      if (unknown.length > 0) {
+        return res.status(400).json({ error: `Not a recognised exam category: ${unknown.join(', ')}` });
+      }
+    }
+
     const { data, error } = await db.auth.admin.createUser({
       email: String(email).trim().toLowerCase(),
       password: String(password),
@@ -419,7 +443,18 @@ app.post('/api/auth/signup', async (req, res, next) => {
       return res.status(status).json({ error: error.message });
     }
 
-    await audit(data.user.id, 'USER_SIGNUP', 'profile', data.user.id, { role, status: 'pending' });
+    if (cleanDomains.length > 0) {
+      const { error: domainErr } = await db
+        .from('setter_domains')
+        .insert(cleanDomains.map((subject) => ({ setter_id: data.user.id, subject, assigned_by: null })));
+      if (domainErr) throw domainErr;
+    }
+
+    await audit(data.user.id, 'USER_SIGNUP', 'profile', data.user.id, {
+      role,
+      status: 'pending',
+      domains: cleanDomains,
+    });
 
     res.json({ ok: true, user_id: data.user.id, status: 'pending' });
   } catch (err) {
@@ -439,7 +474,28 @@ app.get('/api/accounts/pending', requireRole('admin'), async (req, res, next) =>
       .eq('status', 'pending')
       .order('created_at', { ascending: true });
     if (error) throw error;
-    res.json({ ok: true, accounts: data ?? [] });
+    const accounts = data ?? [];
+
+    // Attach each pending paper setter's chosen domains, so the Admin sees
+    // what they signed up to set papers for before approving.
+    const setterIds = accounts.filter((a) => a.role === 'paper_setter').map((a) => a.id);
+    if (setterIds.length > 0) {
+      const { data: domainRows, error: domainErr } = await db
+        .from('setter_domains')
+        .select('setter_id, subject')
+        .in('setter_id', setterIds);
+      if (domainErr) throw domainErr;
+      const bySetterId = new Map();
+      for (const row of domainRows ?? []) {
+        if (!bySetterId.has(row.setter_id)) bySetterId.set(row.setter_id, []);
+        bySetterId.get(row.setter_id).push(row.subject);
+      }
+      for (const a of accounts) {
+        if (a.role === 'paper_setter') a.domains = bySetterId.get(a.id) ?? [];
+      }
+    }
+
+    res.json({ ok: true, accounts });
   } catch (err) {
     next(err);
   }
@@ -496,6 +552,95 @@ app.post('/api/accounts/:id/reject', requireRole('admin'), async (req, res, next
     });
 
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Every approved paper setter, with their current subject domains. Admin-only
+ * — this is the roster POST /api/accounts/:id/domains below grants against.
+ */
+app.get('/api/accounts/setters', requireRole('admin'), async (req, res, next) => {
+  try {
+    const { data: setters, error } = await db
+      .from('profiles')
+      .select('id, full_name, role, status, created_at')
+      .eq('role', 'paper_setter')
+      .eq('status', 'approved')
+      .order('full_name', { ascending: true });
+    if (error) throw error;
+
+    const ids = (setters ?? []).map((s) => s.id);
+    const bySetterId = new Map();
+    if (ids.length > 0) {
+      const { data: domainRows, error: domainErr } = await db
+        .from('setter_domains')
+        .select('setter_id, subject')
+        .in('setter_id', ids);
+      if (domainErr) throw domainErr;
+      for (const row of domainRows ?? []) {
+        if (!bySetterId.has(row.setter_id)) bySetterId.set(row.setter_id, []);
+        bySetterId.get(row.setter_id).push(row.subject);
+      }
+    }
+
+    res.json({
+      ok: true,
+      setters: (setters ?? []).map((s) => ({ ...s, domains: bySetterId.get(s.id) ?? [] })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Grant an already-approved paper setter one or more additional exam-category
+ * domains — the 2-domain choice at sign-up is a floor, not a ceiling; an
+ * Admin can raise it any time as workload requires. Admin-only.
+ * Body: { subjects: string[] } — categories from listCategories().
+ */
+app.post('/api/accounts/:id/domains', requireRole('admin'), async (req, res, next) => {
+  try {
+    const subjects = Array.from(
+      new Set((Array.isArray(req.body?.subjects) ? req.body.subjects : []).map((s) => String(s || '').trim()).filter(Boolean))
+    );
+    if (subjects.length === 0) {
+      return res.status(400).json({ error: 'Provide at least one exam category' });
+    }
+    const validCategories = listCategories();
+    const unknown = subjects.filter((s) => !validCategories.includes(s));
+    if (unknown.length > 0) {
+      return res.status(400).json({ error: `Not a recognised exam category: ${unknown.join(', ')}` });
+    }
+
+    const { data: account } = await db.from('profiles').select('*').eq('id', req.params.id).single();
+    if (!account) return res.status(404).json({ error: 'Account not found' });
+    if (account.role !== 'paper_setter') {
+      return res.status(400).json({ error: 'Only paper-setter accounts have exam-category domains' });
+    }
+
+    const { error: insertErr } = await db
+      .from('setter_domains')
+      .upsert(
+        subjects.map((subject) => ({ setter_id: req.params.id, subject, assigned_by: req.user.id })),
+        { onConflict: 'setter_id,subject', ignoreDuplicates: true }
+      );
+    if (insertErr) throw insertErr;
+
+    const { data: domainRows, error: readErr } = await db
+      .from('setter_domains')
+      .select('subject')
+      .eq('setter_id', req.params.id)
+      .order('subject', { ascending: true });
+    if (readErr) throw readErr;
+
+    await audit(req.user.id, 'SETTER_DOMAINS_GRANTED', 'profile', req.params.id, {
+      full_name: account.full_name,
+      added: subjects,
+    });
+
+    res.json({ ok: true, domains: (domainRows ?? []).map((r) => r.subject) });
   } catch (err) {
     next(err);
   }
@@ -625,6 +770,18 @@ async function assignedSubjects(examId, teacherId) {
     .eq('teacher_id', teacherId);
   if (!data || data.length === 0) return null;
   return data.map((r) => r.subject);
+}
+
+/**
+ * A paper setter's exam-category domains (global, not per-exam — see
+ * setter_domains, patch-10-setter-domains.sql). Empty array, not null, when
+ * the setter holds none — unlike assignedSubjects() above there is no "no
+ * rows means unrestricted" fallback: a setter with zero domains is
+ * restricted to nothing until an Admin grants some.
+ */
+async function assignedDomains(setterId) {
+  const { data } = await db.from('setter_domains').select('subject').eq('setter_id', setterId);
+  return (data ?? []).map((r) => r.subject);
 }
 
 /**
@@ -981,11 +1138,15 @@ app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
     const rows = [];
     const rejected = [];
 
-    // How full each (section, type, marks) slot already is. Counted with an
-    // exact HEAD query per slot rather than by reading the bank: a large bank
-    // runs past PostgREST's max-rows, and an undercount would wave uploads
-    // through. Only the slots this batch actually touches are queried, and the
-    // tally then rises as rows are accepted so one batch cannot overfill.
+    // How full each (section, type, marks) slot already is FOR THIS TEACHER.
+    // The bank ceiling is a per-teacher allowance, not a shared pool — when two
+    // teachers are assigned the same subject, each gets their own headroom, so
+    // the count must be scoped to req.user.id or the first teacher to fill the
+    // slot would lock every other teacher out of it. Counted with an exact
+    // HEAD query per slot rather than by reading the bank: a large bank runs
+    // past PostgREST's max-rows, and an undercount would wave uploads through.
+    // Only the slots this batch actually touches are queried, and the tally
+    // then rises as rows are accepted so one batch cannot overfill.
     const setCount = Math.max(1, Math.trunc(Number(exam.paper_set_count) || 1));
     const slotDepth = new Map();
     const depthFor = async (key, sectionName, type, marks) => {
@@ -994,6 +1155,7 @@ app.post('/api/questions', requireRole('teacher'), async (req, res, next) => {
         .from('questions')
         .select('*', { count: 'exact', head: true })
         .eq('exam_id', examId)
+        .eq('teacher_id', req.user.id)
         .eq('question_type', type)
         .eq('marks', marks);
       query = sectionName == null
@@ -1132,6 +1294,17 @@ app.post('/api/papers', requireRole('paper_setter'), async (req, res, next) => {
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
     if (exam.status !== 'scheduled') {
       return res.status(409).json({ error: `Exam is '${exam.status}' — papers can only be composed while it is scheduled` });
+    }
+    // A setter may only compose for an exam in one of their granted domains
+    // (see setter_domains). Unenforced/custom formats carry no category and
+    // are not gated — there is nothing to check the setter's domains against.
+    if (resolved?.category) {
+      const domains = await assignedDomains(req.user.id);
+      if (!domains.includes(resolved.category)) {
+        return res.status(403).json({
+          error: `This exam is in "${resolved.category}", which is not one of your assigned domains. Ask an Admin to grant it if this is expected.`,
+        });
+      }
     }
 
     const labels = setLabels(exam.paper_set_count);
@@ -1711,24 +1884,34 @@ app.post('/api/forensics/identify', requireRole('admin'), async (req, res, next)
     } = req.body || {};
     let via = 'copy id';
 
-    // A watermark scan: short code tiled across the page.
+    // A watermark scan: either the bare 12-char trace code, or a full
+    // per-question frame token (SAE:<trace><page><question><tag>) scanned
+    // straight off a printed question's own QR.
     if (!copyId && traceRaw) {
-      const code = normaliseTraceCode(traceRaw);
-      if (!code) {
+      const parsed = parseFrameToken(traceRaw);
+      if (!parsed) {
         return res.status(400).json({
-          error: `"${traceRaw}" is not a valid trace code — expected ${TRACE_LENGTH} characters, optionally prefixed with SAE:`,
+          error: `"${traceRaw}" is not a recognised trace code or question QR.`,
         });
       }
       const { data: match } = await db
         .from('paper_copies')
         .select('id')
-        .eq('trace_code', code)
+        .eq('trace_code', parsed.trace)
         .maybeSingle();
       if (!match) {
-        return res.status(404).json({ error: `No printed copy carries the trace code ${code}` });
+        return res.status(404).json({ error: `No printed copy carries the trace code ${parsed.trace}` });
+      }
+      if (parsed.framed) {
+        const expectedTag = frameTag(match.id, parsed.page, parsed.frame);
+        if (parsed.tag !== expectedTag) {
+          return res.status(400).json({ error: 'Question QR signature invalid — possible forged copy' });
+        }
+        via = `question QR (${frameLabel(parsed.frame, parsed.legacy)})`;
+      } else {
+        via = 'page watermark';
       }
       copyId = match.id;
-      via = 'page watermark';
     }
 
     // The full header QR.
@@ -2100,15 +2283,20 @@ app.post('/api/centers/:id/allocate', requireRole('admin'), async (req, res, nex
   try {
     const centerId = req.params.id;
     const count = Math.max(1, Math.min(1000, parseInt(req.body?.count, 10) || 0));
+    const setLabel = typeof req.body?.setLabel === 'string' ? req.body.setLabel.trim() : '';
     if (!count) return res.status(400).json({ error: 'count must be a number >= 1' });
 
     const { data: center } = await db.from('exam_centers').select('*').eq('id', centerId).single();
     if (!center) return res.status(404).json({ error: 'Center not found' });
 
-    const { data: papers } = await db.from('papers').select('id').eq('exam_id', center.exam_id);
+    let paperQuery = db.from('papers').select('id, set_label').eq('exam_id', center.exam_id);
+    if (setLabel) paperQuery = paperQuery.eq('set_label', setLabel);
+    const { data: papers } = await paperQuery;
     const paperIds = (papers || []).map((p) => p.id);
     if (paperIds.length === 0) {
-      return res.status(409).json({ error: 'No papers for this exam yet' });
+      return res.status(409).json({
+        error: setLabel ? `No papers for set "${setLabel}" on this exam` : 'No papers for this exam yet',
+      });
     }
 
     const { data: copies } = await db
@@ -2134,9 +2322,10 @@ app.post('/api/centers/:id/allocate', requireRole('admin'), async (req, res, nex
     await audit(req.user.id, 'COPIES_ALLOCATED', 'exam_center', centerId, {
       count: ids.length,
       center: center.name,
+      set_label: setLabel || null,
     });
 
-    res.json({ ok: true, allocated: ids.length, requested: count });
+    res.json({ ok: true, allocated: ids.length, requested: count, set_label: setLabel || null });
   } catch (err) {
     next(err);
   }
@@ -2158,6 +2347,16 @@ app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, re
       try {
         parsed = typeof qrPayload === 'string' ? JSON.parse(qrPayload) : qrPayload;
       } catch {
+        // The small QR beside each question is a leak-tracing watermark, not
+        // the scan-in code — a common mix-up since both are printed on the
+        // same sheet. Point the invigilator at the right one instead of
+        // the caught-you-off-guard "not valid JSON" error.
+        if (parseFrameToken(qrPayload)) {
+          return res.status(400).json({
+            error:
+              'This is a per-question tracing QR, not a scan-in code. Scan the single QR in the paper header instead — the per-question QRs are only used to trace a leaked page (Admin → Custody → Leak Trace).',
+          });
+        }
         return res.status(400).json({ error: 'QR payload is not valid JSON' });
       }
       const { c, p, n, sig } = parsed || {};
@@ -2168,7 +2367,11 @@ app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, re
     }
     if (!copyId) return res.status(400).json({ error: 'Provide qr_payload or copy_id' });
 
-    const { data: copy } = await db.from('paper_copies').select('*').eq('id', copyId).single();
+    const { data: copy } = await db
+      .from('paper_copies')
+      .select('*, paper:papers(set_label)')
+      .eq('id', copyId)
+      .single();
     if (!copy) return res.status(404).json({ error: 'No copy matches this QR' });
     if (copy.scanned_at) {
       return res.status(409).json({
@@ -2218,8 +2421,8 @@ app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, re
       severity: 'info',
       type: 'COPY_SCANNED',
       message: center
-        ? `Copy #${copy.copy_number} scanned in at ${center.name} (${center.code})`
-        : `Copy #${copy.copy_number} scanned in`,
+        ? `Copy #${copy.copy_number}${copy.paper?.set_label ? ` ${copy.paper.set_label}` : ''} scanned in at ${center.name} (${center.code})`
+        : `Copy #${copy.copy_number}${copy.paper?.set_label ? ` ${copy.paper.set_label}` : ''} scanned in`,
       paper_id: copy.paper_id,
       copy_id: copyId,
     });
@@ -2229,7 +2432,12 @@ app.post('/api/copies/scan', requireRole('admin', 'invigilator'), async (req, re
       center: center?.code ?? null,
     });
 
-    res.json({ ok: true, copy_number: copy.copy_number, scanned_at: now });
+    res.json({
+      ok: true,
+      copy_number: copy.copy_number,
+      set_label: copy.paper?.set_label ?? null,
+      scanned_at: now,
+    });
   } catch (err) {
     next(err);
   }

@@ -12,8 +12,11 @@ interface AuthContextValue {
   signIn: (role: Role, email: string, password: string) => Promise<void>;
   /** Center/invigilator login: code + password (mapped to a hidden email). */
   signInCenter: (code: string, password: string) => Promise<void>;
-  /** Creates the account (pre-confirmed, no email) and signs straight in. */
-  signUp: (role: Role, fullName: string, email: string, password: string) => Promise<void>;
+  /**
+   * Creates the account (pre-confirmed, no email) and signs straight in.
+   * `domains` — exactly 2 subjects — is required for role 'paper_setter'.
+   */
+  signUp: (role: Role, fullName: string, email: string, password: string, domains?: string[]) => Promise<void>;
   signOut: () => Promise<void>;
   /**
    * True for one render cycle right after a fresh `signIn`/`signUp` — never
@@ -127,10 +130,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signUp = useCallback(
-    async (role: Role, fullName: string, email: string, password: string) => {
+    async (role: Role, fullName: string, email: string, password: string, domains?: string[]) => {
       // The server creates the account pre-confirmed via the admin API,
       // so no confirmation email is sent (immune to the mailer rate limit).
-      await signUpUser(role, fullName.trim(), email.trim(), password);
+      await signUpUser(role, fullName.trim(), email.trim(), password, domains);
       const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,

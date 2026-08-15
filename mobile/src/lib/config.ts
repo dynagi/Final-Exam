@@ -44,7 +44,7 @@ function lanHostFromConstants(): string | null {
  * a real phone can't reach). Find it with `ipconfig` → IPv4 of your Wi-Fi.
  * Set to '' to fall back to auto-detection.
  */
-const LAN_HOST_OVERRIDE = '192.168.1.100';
+const LAN_HOST_OVERRIDE = '';
 
 /**
  * Full URL override — use when the phone is NOT on the same Wi-Fi as the PC.

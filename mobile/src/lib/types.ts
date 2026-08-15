@@ -9,6 +9,11 @@ export interface Profile {
   role: Role;
   status: AccountStatus;
   created_at: string;
+  /**
+   * Paper-setter subject domains — present only on `GET /api/accounts/pending`
+   * and `GET /api/accounts/setters` responses, not on the base profile row.
+   */
+  domains?: string[];
 }
 
 export type QuestionStatus = 'submitted' | 'approved' | 'used';
