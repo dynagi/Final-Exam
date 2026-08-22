@@ -853,43 +853,124 @@ function ActionButton({
   );
 }
 
-/* ------------------------- premium exam management modals ------------------ */
+/* ------------------------- vintage exam management modals ------------------ */
+
+/** A small brass-and-parchment switch — recognizable as a toggle, not a modern blue/grey pill. */
+function VintageToggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+  const p = useArchivePalette();
+  const t = useRef(new Animated.Value(value ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(t, { toValue: value ? 1 : 0, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
+  }, [value, t]);
+  const knobLeft = t.interpolate({ inputRange: [0, 1], outputRange: [2, 21] });
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked: value }}
+      onPress={() => onChange(!value)}
+      style={[vsStyles.track, { borderColor: p.gold, backgroundColor: value ? p.gold : `${p.pamphletEdge}33` }]}
+    >
+      <Animated.View style={[vsStyles.knob, { left: knobLeft, backgroundColor: p.pamphlet, borderColor: p.pamphletEdge }]} />
+    </Pressable>
+  );
+}
+const vsStyles = StyleSheet.create({
+  track: { width: 42, height: 24, borderRadius: 12, borderWidth: 1.5, justifyContent: 'center' },
+  knob: { position: 'absolute', width: 18, height: 18, borderRadius: 9, borderWidth: 1 },
+});
+
+/** Compact vintage button — the Save/Cancel pair at the foot of the parchment. */
+function PSButton({
+  title,
+  icon,
+  kind,
+  onPress,
+  loading,
+}: {
+  title: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  kind: 'save' | 'cancel';
+  onPress: () => void;
+  loading?: boolean;
+}) {
+  const p = useArchivePalette();
+  const t = useRef(new Animated.Value(0)).current;
+  const [focused, setFocused] = useState(false);
+  const to = (v: number) => Animated.spring(t, { toValue: v, useNativeDriver: true, speed: 30, bounciness: 6 }).start();
+  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [0, -2] });
+  const save = kind === 'save';
+  return (
+    <Animated.View style={{ transform: [{ translateY }], flex: 1 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={title}
+        accessibilityState={{ disabled: !!loading, busy: !!loading }}
+        disabled={loading}
+        onPress={onPress}
+        onPressIn={() => to(1)}
+        onPressOut={() => to(0)}
+        {...({ onHoverIn: () => to(1), onHoverOut: () => to(0), onFocus: () => setFocused(true), onBlur: () => setFocused(false) } as object)}
+        style={[
+          psStyles.btn,
+          save
+            ? { backgroundColor: p.cover, borderColor: p.gold }
+            : { backgroundColor: p.pamphletShade, borderColor: focused ? p.gold : `${p.pamphletEdge}AA` },
+          { opacity: loading ? 0.6 : 1, borderWidth: focused ? 2 : 1.5 },
+        ]}
+      >
+        {icon ? <Ionicons name={loading ? 'hourglass-outline' : icon} size={14} color={save ? p.gold : p.pamphletInk} /> : null}
+        <Text style={[psStyles.btnText, { color: save ? p.onCover : p.pamphletInk }]}>{title}</Text>
+      </Pressable>
+    </Animated.View>
+  );
+}
+const psStyles = StyleSheet.create({
+  btn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    borderRadius: 4,
+    paddingVertical: 11,
+    paddingHorizontal: 18,
+  },
+  btnText: { fontFamily: serif, fontSize: 12.5, fontWeight: '700', letterSpacing: 0.8 },
+});
 
 /**
- * A separate, fixed "premium examination platform" palette for just the
- * Manage Paper Sets / Assign Subjects popups — ivory, burgundy, muted gold —
- * distinct from the rest of the vintage archive theme, per spec.
+ * Shared shell for both exam-management popups: a modest parchment sheet
+ * resting on the archive's own dark backdrop (ArchiveBackground — the same
+ * one behind every other screen), with plenty of that darkness left visible
+ * around it, rather than a card that fills the viewport. Header (title +
+ * exam name + ornamental rule + description) is built in here so both
+ * popups read as the same document; each supplies only its own body.
  */
-const PREMIUM = {
-  bg: '#FBF6EC',
-  card: '#FFFFFF',
-  cardAlt: '#FAF3E7',
-  burgundy: '#7A1F2B',
-  burgundyDark: '#5C1620',
-  gold: '#B8925A',
-  text: '#2E2621',
-  textDim: '#6B5D52',
-  textFaint: '#9C8F80',
-  border: '#E7DCC9',
-  cream: '#FBF6EC',
-};
-
-function PremiumModal({
+function ParchmentModal({
   visible,
   onClose,
-  width = 560,
+  width,
+  title,
+  subtitle,
+  description,
   children,
 }: {
   visible: boolean;
   onClose: () => void;
-  width?: number;
+  /** Max width — shrinks to fit narrower screens regardless. */
+  width: number;
+  title: string;
+  subtitle?: string;
+  description?: string;
   children: React.ReactNode;
 }) {
+  const p = useArchivePalette();
+  const vp = useMemo(() => parchmentStyles(p), [p]);
+  const { width: winWidth, height: winHeight } = useWindowDimensions();
   const reduced = useReducedMotion();
-  const { width: winWidth } = useWindowDimensions();
-  const t = useRef(new Animated.Value(0)).current;
   const [mounted, setMounted] = useState(visible);
 
+  // The parchment gently unrolls into place — a vertical settle, not a pop.
+  const t = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (visible) setMounted(true);
     if (reduced) {
@@ -899,94 +980,65 @@ function PremiumModal({
     }
     Animated.timing(t, {
       toValue: visible ? 1 : 0,
-      duration: visible ? 320 : 220,
-      easing: Easing.out(Easing.cubic),
+      duration: visible ? 560 : 260,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(() => {
       if (!visible) setMounted(false);
     });
-  }, [visible, t, reduced]);
+  }, [visible, reduced, t]);
 
-  const scale = t.interpolate({ inputRange: [0, 1], outputRange: [0.97, 1] });
-  const translateY = t.interpolate({ inputRange: [0, 1], outputRange: [14, 0] });
-  const sheetWidth = Math.min(winWidth - 40, width);
+  const sheetWidth = Math.min(width, winWidth - 96);
+  const sheetOpacity = t.interpolate({ inputRange: [0, 0.25, 1], outputRange: [0, 0.4, 1] });
+  const sheetScaleY = t.interpolate({ inputRange: [0, 1], outputRange: [0.88, 1] });
+  const sheetTranslateY = t.interpolate({ inputRange: [0, 1], outputRange: [22, 0] });
+  const contentOpacity = t.interpolate({ inputRange: [0, 0.55, 1], outputRange: [0, 0, 1] });
 
   return (
     <Modal transparent visible={mounted} animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Animated.View style={[StyleSheet.absoluteFill, premiumStyles.scrim, { opacity: t }]}>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: t }]}>
+        <ArchiveBackground />
         <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="Close" onPress={onClose} />
+        {/* A thin gold frame around the whole page, per the archive's own language. */}
+        <View pointerEvents="none" style={[vp.pageFrame, { borderColor: `${p.gold}2A` }]} />
       </Animated.View>
-      <View style={premiumStyles.center} pointerEvents="box-none">
+
+      <View style={vp.center} pointerEvents="box-none">
         <Animated.View
           style={[
-            premiumStyles.sheet,
-            { width: sheetWidth, opacity: t, transform: [{ scale }, { translateY }] },
+            vp.sheet,
+            {
+              width: sheetWidth,
+              maxHeight: winHeight - 96,
+              backgroundColor: p.pamphlet,
+              borderColor: p.pamphletEdge,
+              opacity: sheetOpacity,
+              transform: [{ translateY: sheetTranslateY }, { scaleY: sheetScaleY }],
+            },
           ]}
         >
-          {children}
+          <LinearGradient
+            colors={[p.pamphletShade, p.pamphlet, p.pamphletShade]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          <PageGrain />
+          <LinearGradient colors={[`${p.pamphletEdge}59`, 'transparent']} style={vp.edgeTop} pointerEvents="none" />
+          <LinearGradient colors={['transparent', `${p.pamphletEdge}59`]} style={vp.edgeBottom} pointerEvents="none" />
+
+          <ScrollView style={vp.scroll} contentContainerStyle={vp.scrollContent} showsVerticalScrollIndicator={false}>
+            <Ionicons name="diamond-outline" size={12} color={p.gold} style={vp.topOrnament} />
+            <Text style={vp.title}>{title}</Text>
+            {subtitle ? <Text style={vp.examName}>{subtitle}</Text> : null}
+            <Rule ornament gap={14} />
+            {description ? <Text style={vp.description}>{description}</Text> : null}
+
+            <Animated.View style={{ opacity: contentOpacity }}>{children}</Animated.View>
+          </ScrollView>
         </Animated.View>
       </View>
     </Modal>
-  );
-}
-
-/** Decorative only — lead on the left, eraser on the right. */
-function PencilBadge({ label }: { label: string }) {
-  const w = 220;
-  const h = 16;
-  return (
-    <View style={premiumStyles.pencilBadgeWrap}>
-      <View style={[premiumStyles.pencilRow, { width: w, height: h }]}>
-        <View
-          style={{
-            width: 0,
-            height: 0,
-            borderTopWidth: h / 2,
-            borderBottomWidth: h / 2,
-            borderRightWidth: h * 0.34,
-            borderTopColor: 'transparent',
-            borderBottomColor: 'transparent',
-            borderRightColor: '#2B2620',
-          }}
-        />
-        <View
-          style={{
-            width: 0,
-            height: 0,
-            borderTopWidth: h / 2,
-            borderBottomWidth: h / 2,
-            borderRightWidth: h * 0.9,
-            borderTopColor: 'transparent',
-            borderBottomColor: 'transparent',
-            borderRightColor: '#D8C39A',
-          }}
-        />
-        <View style={[premiumStyles.pencilWood, { flex: 2, height: h }]} />
-        <View style={[premiumStyles.pencilBand, { flex: 0.3, height: h }]} />
-        <View style={[premiumStyles.pencilBarrel, { flex: 4.4, height: h * 1.15 }]}>
-          <Text style={premiumStyles.pencilBarrelText} numberOfLines={1}>
-            {label}
-          </Text>
-        </View>
-        <View style={[premiumStyles.pencilBand, { flex: 0.3, height: h }]} />
-        <View style={[premiumStyles.pencilWood, { flex: 2, height: h }]} />
-        <View style={[premiumStyles.pencilFerrule, { flex: 0.8, height: h * 0.86 }]} />
-        <View style={[premiumStyles.pencilEraser, { flex: 1.1, height: h, borderRadius: h / 2 }]} />
-      </View>
-    </View>
-  );
-}
-
-function PremiumSwitch({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <Pressable
-      accessibilityRole="switch"
-      accessibilityState={{ checked: value }}
-      onPress={() => onChange(!value)}
-      style={[premiumStyles.switchTrack, value && premiumStyles.switchTrackOn]}
-    >
-      <View style={[premiumStyles.switchThumb, value && premiumStyles.switchThumbOn]} />
-    </Pressable>
   );
 }
 
@@ -1011,6 +1063,8 @@ function PaperSetsModal({
   onSave: () => void;
   onClose: () => void;
 }) {
+  const p = useArchivePalette();
+  const vp = useMemo(() => parchmentStyles(p), [p]);
   const labels = paperSetLabels(setsDraft);
   const [highlighted, setHighlighted] = useState<string | null>(labels[0] ?? null);
 
@@ -1021,119 +1075,281 @@ function PaperSetsModal({
   }, [setsDraft]);
 
   return (
-    <PremiumModal visible={visible} onClose={onClose} width={560}>
-      <PencilBadge label="PAPER SETS" />
-      <Text style={premiumStyles.title}>Paper Sets · {exam?.name ?? ''}</Text>
-      <Text style={premiumStyles.subtitle}>
-        Every set is an independent paper: the setter picks its own questions and each set must
-        satisfy the exam format on its own. Sets can be added or removed at any time until their
-        paper is sealed.
-      </Text>
-
-      <ScrollView style={premiumStyles.scroll} showsVerticalScrollIndicator={false}>
-        <View style={premiumStyles.card}>
-          <Text style={premiumStyles.cardLabel}>Number of paper sets</Text>
-          <View style={premiumStyles.stepperRow}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Decrease number of paper sets"
-              disabled={setsDraft <= 1}
-              onPress={() => onSetsDraft(Math.max(1, setsDraft - 1))}
-              style={[premiumStyles.stepperBtn, setsDraft <= 1 && premiumStyles.stepperBtnOff]}
-            >
-              <Ionicons name="remove" size={18} color={PREMIUM.burgundy} />
-            </Pressable>
-            <View style={premiumStyles.stepperValueWrap}>
-              <Text style={premiumStyles.stepperValue}>{setsDraft}</Text>
-              <Text style={premiumStyles.stepperSuffix}>{setsDraft === 1 ? 'set' : 'sets'}</Text>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Increase number of paper sets"
-              disabled={setsDraft >= 26}
-              onPress={() => onSetsDraft(Math.min(26, setsDraft + 1))}
-              style={[premiumStyles.stepperBtn, setsDraft >= 26 && premiumStyles.stepperBtnOff]}
-            >
-              <Ionicons name="add" size={18} color={PREMIUM.burgundy} />
-            </Pressable>
+    <ParchmentModal
+      visible={visible}
+      onClose={onClose}
+      width={440}
+      title="PAPER SETS"
+      subtitle={exam?.name ?? 'This Examination'}
+      description="Each set is an independent examination paper. The setter chooses the questions for every set, and each paper must satisfy the examination format before it is sealed."
+    >
+      <View style={vp.section}>
+        <CenteredHeading>NUMBER OF PAPER SETS</CenteredHeading>
+        <View style={vp.stepperRow}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Decrease number of paper sets"
+            disabled={setsDraft <= 1}
+            onPress={() => onSetsDraft(Math.max(1, setsDraft - 1))}
+            style={[vp.stepperBtn, { borderColor: p.gold }, setsDraft <= 1 && vp.stepperBtnOff]}
+          >
+            <Ionicons name="remove" size={17} color={p.gold} />
+          </Pressable>
+          <View style={vp.stepperValueWrap}>
+            <Text style={vp.stepperValue}>{setsDraft}</Text>
+            <Text style={vp.stepperSuffix}>{setsDraft === 1 ? 'SET' : 'SETS'}</Text>
           </View>
-          {exam && setsDraft < exam.paper_set_count ? (
-            <Text style={premiumStyles.warning}>
-              ⚠ Reducing to {setsDraft} removes{' '}
-              {paperSetLabels(exam.paper_set_count).slice(setsDraft).join(', ')}. Any unsealed
-              selection in those sets is discarded; sealed sets cannot be removed.
-            </Text>
-          ) : null}
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Increase number of paper sets"
+            disabled={setsDraft >= 26}
+            onPress={() => onSetsDraft(Math.min(26, setsDraft + 1))}
+            style={[vp.stepperBtn, { borderColor: p.gold }, setsDraft >= 26 && vp.stepperBtnOff]}
+          >
+            <Ionicons name="add" size={17} color={p.gold} />
+          </Pressable>
         </View>
+        {exam && setsDraft < exam.paper_set_count ? (
+          <Text style={vp.warning}>
+            ⚠ Reducing to {setsDraft} removes{' '}
+            {paperSetLabels(exam.paper_set_count).slice(setsDraft).join(', ')}. Any unsealed
+            selection in those sets is discarded; sealed sets cannot be removed.
+          </Text>
+        ) : null}
+      </View>
 
-        <Text style={premiumStyles.sectionLabel}>Manage sets</Text>
-        <View style={premiumStyles.setGrid}>
-          {labels.map((label) => {
-            const active = label === highlighted;
-            return (
-              <Pressable
-                key={label}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                onPress={() => setHighlighted(label)}
-                style={[premiumStyles.setCard, active && premiumStyles.setCardActive]}
-              >
-                <Ionicons
-                  name="document-text-outline"
-                  size={16}
-                  color={active ? PREMIUM.burgundy : PREMIUM.textDim}
-                />
-                <Text style={[premiumStyles.setCardText, active && premiumStyles.setCardTextActive]}>
-                  {label}
-                </Text>
-                <Ionicons
-                  name="chevron-forward"
-                  size={15}
-                  color={active ? PREMIUM.burgundy : PREMIUM.textFaint}
-                />
-              </Pressable>
-            );
-          })}
+      <View style={vp.section}>
+        <CenteredHeading>MANAGE PAPER SETS</CenteredHeading>
+        {labels.map((label) => {
+          const active = label === highlighted;
+          return (
+            <Pressable
+              key={label}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              onPress={() => setHighlighted(label)}
+              style={[
+                vp.setCard,
+                { borderColor: `${p.pamphletEdge}77`, backgroundColor: `${p.pamphletShade}99` },
+                active && { borderColor: p.gold, backgroundColor: `${p.gold}1A`, borderWidth: 1.5 },
+              ]}
+            >
+              <Ionicons name="diamond-outline" size={11} color={active ? p.gold : `${p.pamphletInkDim}99`} />
+              <Text style={[vp.setCardText, { color: p.pamphletInkDim }, active && { color: p.pamphletInk }]}>
+                {label}
+              </Text>
+              <Ionicons name="chevron-forward" size={14} color={active ? p.gold : `${p.pamphletInkDim}88`} />
+            </Pressable>
+          );
+        })}
+      </View>
+
+      <View style={vp.section}>
+        <CenteredHeading>ALLOW QUESTION REUSE</CenteredHeading>
+        <View style={vp.toggleRow}>
+          <Text style={vp.toggleHint}>
+            {reuseDraft
+              ? 'On — a question may appear in more than one set.'
+              : 'Off — every set must use different questions.'}
+          </Text>
+          <VintageToggle value={reuseDraft} onChange={onReuseDraft} />
         </View>
+      </View>
 
-        <View style={premiumStyles.toggleCard}>
-          <View style={premiumStyles.flex}>
-            <Text style={premiumStyles.cardLabel}>Allow question reuse across sets</Text>
-            <Text style={premiumStyles.cardHint}>
-              {reuseDraft
-                ? 'A question may appear in more than one set.'
-                : 'Off — every set must use different questions.'}
-            </Text>
-          </View>
-          <PremiumSwitch value={reuseDraft} onChange={onReuseDraft} />
-        </View>
-
-        <View style={premiumStyles.summaryCard}>
-          <Text style={premiumStyles.summaryLabel}>Summary</Text>
-          <Text style={premiumStyles.summaryText}>
+      <View style={[vp.section, { marginTop: 14 }]}>
+        <CenteredHeading>SUMMARY</CenteredHeading>
+        <View style={[vp.summaryBox, { borderColor: `${p.pamphletEdge}88` }]}>
+          <Ionicons name="information-circle-outline" size={13} color={p.gold} />
+          <Text style={vp.summaryText}>
             You have created {setsDraft} paper set{setsDraft === 1 ? '' : 's'}: {labels.join(', ')}
           </Text>
         </View>
-      </ScrollView>
-
-      <View style={premiumStyles.actions}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={onClose} style={premiumStyles.cancelBtn}>
-          <Text style={premiumStyles.cancelBtnText}>Cancel</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Save Changes"
-          accessibilityState={{ disabled: saving }}
-          disabled={saving}
-          onPress={onSave}
-          style={[premiumStyles.saveBtn, saving && { opacity: 0.6 }]}
-        >
-          <Text style={premiumStyles.saveBtnText}>{saving ? 'Saving…' : 'Save Changes'}</Text>
-        </Pressable>
       </View>
-    </PremiumModal>
+
+      <View style={vp.actions}>
+        <PSButton
+          title={saving ? 'Saving…' : 'Save Changes'}
+          icon="checkmark-circle-outline"
+          kind="save"
+          onPress={onSave}
+          loading={saving}
+        />
+        <PSButton title="Cancel" kind="cancel" onPress={onClose} />
+      </View>
+    </ParchmentModal>
   );
 }
+
+const parchmentStyles = (p: ArchivePalette) =>
+  StyleSheet.create({
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
+    pageFrame: { position: 'absolute', top: 14, left: 14, right: 14, bottom: 14, borderWidth: 1, borderRadius: 4 },
+    sheet: {
+      borderWidth: 1,
+      borderRadius: 6,
+      overflow: 'hidden',
+      shadowColor: '#000',
+      shadowOffset: { width: 0, height: 16 },
+      shadowOpacity: 0.5,
+      shadowRadius: 26,
+      elevation: 20,
+    },
+    edgeTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 10 },
+    edgeBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 10 },
+    scroll: { flexGrow: 0 },
+    scrollContent: { paddingHorizontal: 26, paddingTop: 22, paddingBottom: 24 },
+    topOrnament: { alignSelf: 'center', marginBottom: 8 },
+    title: {
+      fontFamily: serif,
+      fontSize: 19,
+      fontWeight: '800',
+      letterSpacing: 2.5,
+      textAlign: 'center',
+      color: p.pamphletInk,
+    },
+    examName: {
+      fontFamily: serif,
+      fontSize: 12.5,
+      fontWeight: '700',
+      letterSpacing: 1.6,
+      textTransform: 'uppercase',
+      textAlign: 'center',
+      color: p.gold,
+      marginTop: 5,
+    },
+    description: {
+      fontFamily: serif,
+      fontSize: 12,
+      lineHeight: 18,
+      textAlign: 'center',
+      color: p.pamphletInkDim,
+    },
+    section: { marginTop: 26 },
+    stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24, marginTop: 10 },
+    stepperBtn: {
+      width: 36,
+      height: 36,
+      borderRadius: 18,
+      borderWidth: 1.5,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(0,0,0,0.05)',
+    },
+    stepperBtnOff: { opacity: 0.3 },
+    stepperValueWrap: { alignItems: 'center', minWidth: 56 },
+    stepperValue: { fontFamily: serif, fontSize: 30, fontWeight: '800', color: p.pamphletInk },
+    stepperSuffix: {
+      fontFamily: serif,
+      fontSize: 9.5,
+      fontWeight: '700',
+      letterSpacing: 1.6,
+      color: p.pamphletInkDim,
+      marginTop: -2,
+    },
+    warning: {
+      fontFamily: serif,
+      fontSize: 11,
+      lineHeight: 16,
+      color: p.danger,
+      textAlign: 'center',
+      marginTop: 12,
+    },
+    setCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderWidth: 1,
+      borderRadius: 4,
+      paddingVertical: 11,
+      paddingHorizontal: 13,
+      marginTop: 10,
+    },
+    setCardText: { flex: 1, fontFamily: serif, fontSize: 13, fontWeight: '700' },
+    toggleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginTop: 10 },
+    toggleHint: { flex: 1, fontFamily: serif, fontSize: 11.5, lineHeight: 16, color: p.pamphletInkDim },
+    summaryBox: {
+      flexDirection: 'row',
+      gap: 7,
+      alignItems: 'flex-start',
+      borderWidth: 1,
+      borderRadius: 3,
+      paddingVertical: 9,
+      paddingHorizontal: 11,
+      marginTop: 10,
+    },
+    summaryText: { flex: 1, fontFamily: serif, fontSize: 11.5, lineHeight: 16, color: p.pamphletInk },
+    actions: { flexDirection: 'row', gap: 10, marginTop: 26 },
+
+    /* ---- Assign Subjects extras ---- */
+    searchBar: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      borderWidth: 1,
+      borderColor: `${p.pamphletEdge}88`,
+      backgroundColor: `${p.pamphletShade}80`,
+      borderRadius: 4,
+      paddingHorizontal: 12,
+      paddingVertical: 9,
+      marginTop: 4,
+    },
+    searchInput: { flex: 1, fontFamily: serif, fontSize: 12.5, color: p.pamphletInk },
+    emptyText: {
+      fontFamily: serif,
+      fontSize: 12,
+      color: p.pamphletInkDim,
+      fontStyle: 'italic',
+      textAlign: 'center',
+      paddingVertical: 14,
+    },
+    splitRow: { flexDirection: 'row', gap: 18, marginTop: 4 },
+    splitCol: { flex: 1 },
+    colLabel: {
+      fontFamily: serif,
+      fontSize: 10.5,
+      fontWeight: '700',
+      letterSpacing: 1.2,
+      textTransform: 'uppercase',
+      color: p.gold,
+      marginBottom: 8,
+    },
+    teacherCard: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+      borderWidth: 1,
+      borderRadius: 4,
+      paddingVertical: 9,
+      paddingHorizontal: 10,
+      marginBottom: 8,
+    },
+    avatar: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderWidth: 1,
+    },
+    avatarText: { fontFamily: serif, fontSize: 12, fontWeight: '800' },
+    teacherName: { fontFamily: serif, fontSize: 12, fontWeight: '700' },
+    teacherMeta: { fontFamily: serif, fontSize: 9.5, color: p.pamphletInkDim, marginTop: 1 },
+    chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+    subjectChip: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      borderWidth: 1,
+      borderColor: `${p.pamphletEdge}88`,
+      backgroundColor: `${p.pamphletShade}80`,
+      borderRadius: 999,
+      paddingHorizontal: 11,
+      paddingVertical: 6,
+    },
+    subjectChipOn: { borderColor: p.gold, backgroundColor: `${p.gold}33` },
+    subjectChipText: { fontFamily: serif, fontSize: 11, fontWeight: '600', color: p.pamphletInkDim },
+    subjectChipTextOn: { color: p.pamphletInk, fontWeight: '700' },
+  });
 
 function AssignSubjectsModal({
   visible,
@@ -1178,66 +1394,78 @@ function AssignSubjectsModal({
   const subjectsFor = (teacherId: string) =>
     assignments.filter((a) => a.teacher_id === teacherId).map((a) => a.subject);
 
-  return (
-    <PremiumModal visible={visible} onClose={onClose} width={700}>
-      <Text style={premiumStyles.title}>Assign Subjects to Teachers</Text>
-      <Text style={premiumStyles.subtitle}>
-        Assign teachers to the subjects they are responsible for in {exam?.name ?? 'this examination'}.
-      </Text>
+  const p = useArchivePalette();
+  const vp = useMemo(() => parchmentStyles(p), [p]);
 
-      <View style={premiumStyles.searchBar}>
-        <Ionicons name="search" size={15} color={PREMIUM.textFaint} />
+  return (
+    <ParchmentModal
+      visible={visible}
+      onClose={onClose}
+      width={700}
+      title="ASSIGN SUBJECTS"
+      subtitle={exam?.name ?? 'This Examination'}
+      description="Assign each teacher the subjects they are responsible for. A teacher assigned no subjects may write questions for any of them."
+    >
+      <View style={vp.searchBar}>
+        <Ionicons name="search" size={14} color={p.pamphletInkDim} />
         <TextInput
           value={query}
           onChangeText={setQuery}
           placeholder="Search teachers or subjects…"
-          placeholderTextColor={PREMIUM.textFaint}
+          placeholderTextColor={`${p.pamphletInkDim}99`}
           autoCapitalize="none"
-          style={premiumStyles.searchInput}
+          style={vp.searchInput}
         />
       </View>
 
       {teachers.length === 0 ? (
-        <Text style={premiumStyles.emptyText}>No teacher accounts yet.</Text>
+        <Text style={vp.emptyText}>No teacher accounts yet.</Text>
       ) : (
-        <View style={premiumStyles.splitRow}>
-          <ScrollView style={premiumStyles.teacherCol} showsVerticalScrollIndicator={false}>
-            {filteredTeachers.map((teacher) => {
-              const active = teacher.id === selectedTeacherId;
-              return (
-                <Pressable
-                  key={teacher.id}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: active }}
-                  onPress={() => setSelectedTeacherId(teacher.id)}
-                  style={[premiumStyles.teacherCard, active && premiumStyles.teacherCardActive]}
-                >
-                  <View style={premiumStyles.avatar}>
-                    <Text style={premiumStyles.avatarText}>{teacher.full_name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <View style={premiumStyles.flex}>
-                    <Text style={premiumStyles.teacherName} numberOfLines={1}>
-                      {teacher.full_name}
-                    </Text>
-                    <Text style={premiumStyles.teacherMeta}>ID #{teacher.id.slice(0, 8).toUpperCase()}</Text>
-                    <Text style={premiumStyles.teacherMeta}>
-                      {countFor(teacher.id)} subject{countFor(teacher.id) === 1 ? '' : 's'} assigned
-                    </Text>
-                  </View>
-                  <Ionicons
-                    name="chevron-forward"
-                    size={15}
-                    color={active ? PREMIUM.burgundy : PREMIUM.textFaint}
-                  />
-                </Pressable>
-              );
-            })}
-          </ScrollView>
+        <View style={vp.splitRow}>
+          <View style={vp.splitCol}>
+            <Text style={vp.colLabel}>Teachers</Text>
+            <ScrollView style={{ maxHeight: 340 }} showsVerticalScrollIndicator={false} nestedScrollEnabled>
+              {filteredTeachers.map((teacher) => {
+                const active = teacher.id === selectedTeacherId;
+                return (
+                  <Pressable
+                    key={teacher.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    onPress={() => setSelectedTeacherId(teacher.id)}
+                    style={[
+                      vp.teacherCard,
+                      { borderColor: `${p.pamphletEdge}77`, backgroundColor: `${p.pamphletShade}99` },
+                      active && { borderColor: p.gold, backgroundColor: `${p.gold}1A`, borderWidth: 1.5 },
+                    ]}
+                  >
+                    <View style={[vp.avatar, { borderColor: p.gold, backgroundColor: `${p.gold}22` }]}>
+                      <Text style={[vp.avatarText, { color: p.gold }]}>
+                        {teacher.full_name.charAt(0).toUpperCase()}
+                      </Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[vp.teacherName, { color: active ? p.pamphletInk : p.pamphletInkDim }]}
+                        numberOfLines={1}
+                      >
+                        {teacher.full_name}
+                      </Text>
+                      <Text style={vp.teacherMeta}>
+                        {countFor(teacher.id)} subject{countFor(teacher.id) === 1 ? '' : 's'} assigned
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={14} color={active ? p.gold : `${p.pamphletInkDim}88`} />
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
 
-          <View style={premiumStyles.subjectCol}>
-            <Text style={premiumStyles.sectionLabel}>Subjects</Text>
+          <View style={vp.splitCol}>
+            <Text style={vp.colLabel}>Subjects</Text>
             {selected ? (
-              <View style={premiumStyles.chipGrid}>
+              <View style={vp.chipGrid}>
                 {subjects.map((subject) => {
                   const on = assignments.some(
                     (a) => a.teacher_id === selected.id && a.subject === subject
@@ -1248,28 +1476,26 @@ function AssignSubjectsModal({
                       accessibilityRole="button"
                       accessibilityState={{ selected: on }}
                       onPress={() => onToggle(selected.id, subject)}
-                      style={[premiumStyles.subjectChip, on && premiumStyles.subjectChipOn]}
+                      style={[vp.subjectChip, on && vp.subjectChipOn]}
                     >
-                      <Text style={[premiumStyles.subjectChipText, on && premiumStyles.subjectChipTextOn]}>
-                        {subject}
-                      </Text>
-                      {on ? <Ionicons name="checkmark" size={13} color={PREMIUM.cream} /> : null}
+                      <Text style={[vp.subjectChipText, on && vp.subjectChipTextOn]}>{subject}</Text>
+                      {on ? <Ionicons name="checkmark" size={12} color={p.gold} /> : null}
                     </Pressable>
                   );
                 })}
               </View>
             ) : (
-              <Text style={premiumStyles.emptyText}>Select a teacher to assign subjects.</Text>
+              <Text style={vp.emptyText}>Select a teacher to assign subjects.</Text>
             )}
 
             {selected ? (
-              <View style={premiumStyles.summaryCard}>
-                <Text style={premiumStyles.summaryLabel}>Current assignment</Text>
-                <Text style={premiumStyles.summaryText}>{selected.full_name}</Text>
-                <Text style={premiumStyles.summaryTextDim}>
+              <View style={[vp.summaryBox, { borderColor: `${p.pamphletEdge}88`, marginTop: 16 }]}>
+                <Ionicons name="information-circle-outline" size={13} color={p.gold} />
+                <Text style={vp.summaryText}>
+                  {selected.full_name} —{' '}
                   {subjectsFor(selected.id).length
                     ? subjectsFor(selected.id).join(' · ')
-                    : 'No subjects assigned — may write for every subject.'}
+                    : 'no subjects assigned; may write for every subject.'}
                 </Text>
               </View>
             ) : null}
@@ -1277,230 +1503,13 @@ function AssignSubjectsModal({
         </View>
       )}
 
-      <View style={premiumStyles.actions}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Cancel" onPress={onClose} style={premiumStyles.cancelBtn}>
-          <Text style={premiumStyles.cancelBtnText}>Cancel</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" accessibilityLabel="Save Changes" onPress={onClose} style={premiumStyles.saveBtn}>
-          <Text style={premiumStyles.saveBtnText}>Save Changes</Text>
-        </Pressable>
+      <View style={vp.actions}>
+        <PSButton title="Save Changes" icon="checkmark-circle-outline" kind="save" onPress={onClose} />
+        <PSButton title="Cancel" kind="cancel" onPress={onClose} />
       </View>
-    </PremiumModal>
+    </ParchmentModal>
   );
 }
-
-const premiumStyles = StyleSheet.create({
-  flex: { flex: 1 },
-  scrim: { backgroundColor: 'rgba(30,20,14,0.5)' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 },
-  sheet: {
-    maxHeight: '88%',
-    backgroundColor: PREMIUM.bg,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    paddingTop: 22,
-    paddingBottom: 18,
-    paddingHorizontal: 24,
-    shadowColor: '#3A2A1E',
-    shadowOffset: { width: 0, height: 20 },
-    shadowOpacity: 0.22,
-    shadowRadius: 34,
-    elevation: 18,
-  },
-  pencilBadgeWrap: { alignItems: 'center', marginBottom: 10 },
-  pencilRow: { flexDirection: 'row', alignItems: 'center' },
-  pencilWood: { backgroundColor: '#A6432E' },
-  pencilBand: { backgroundColor: PREMIUM.gold },
-  pencilBarrel: {
-    backgroundColor: PREMIUM.burgundy,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 2,
-  },
-  pencilBarrelText: { fontSize: 7.5, fontWeight: '800', letterSpacing: 1, color: PREMIUM.cream },
-  pencilFerrule: { backgroundColor: '#9A9994' },
-  pencilEraser: { backgroundColor: '#D98A8A' },
-
-  title: { fontSize: 19, fontWeight: '800', color: PREMIUM.text, textAlign: 'center', letterSpacing: 0.2 },
-  subtitle: {
-    fontSize: 12.5,
-    lineHeight: 18,
-    color: PREMIUM.textDim,
-    textAlign: 'center',
-    marginTop: 8,
-    marginBottom: 16,
-  },
-  scroll: { flexGrow: 0 },
-
-  card: {
-    backgroundColor: PREMIUM.card,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#3A2A1E',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.06,
-    shadowRadius: 12,
-    elevation: 2,
-  },
-  cardLabel: { fontSize: 13, fontWeight: '700', color: PREMIUM.text },
-  cardHint: { fontSize: 11.5, color: PREMIUM.textDim, marginTop: 3, lineHeight: 16 },
-  stepperRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 22, marginTop: 12 },
-  stepperBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    borderWidth: 1,
-    borderColor: PREMIUM.burgundy,
-    backgroundColor: `${PREMIUM.burgundy}12`,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperBtnOff: { opacity: 0.35 },
-  stepperValueWrap: { alignItems: 'center', minWidth: 70 },
-  stepperValue: { fontSize: 26, fontWeight: '800', color: PREMIUM.text, fontVariant: ['tabular-nums'] },
-  stepperSuffix: { fontSize: 11, color: PREMIUM.textDim, marginTop: -2 },
-  warning: { fontSize: 11.5, color: PREMIUM.burgundy, marginTop: 12, lineHeight: 16 },
-
-  sectionLabel: { fontSize: 12.5, fontWeight: '700', color: PREMIUM.text, marginBottom: 10 },
-  setGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 16 },
-  setCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexGrow: 1,
-    minWidth: 140,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    backgroundColor: PREMIUM.card,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-  },
-  setCardActive: { borderColor: PREMIUM.gold, backgroundColor: `${PREMIUM.gold}18` },
-  setCardText: { flex: 1, fontSize: 13, fontWeight: '700', color: PREMIUM.textDim },
-  setCardTextActive: { color: PREMIUM.burgundy },
-
-  toggleCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    backgroundColor: PREMIUM.card,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 16,
-  },
-  switchTrack: {
-    width: 46,
-    height: 26,
-    borderRadius: 13,
-    backgroundColor: '#DCD0BE',
-    padding: 3,
-  },
-  switchTrackOn: { backgroundColor: PREMIUM.burgundy },
-  switchThumb: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#FFFFFF' },
-  switchThumbOn: { transform: [{ translateX: 20 }] },
-
-  summaryCard: {
-    backgroundColor: PREMIUM.cardAlt,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    borderRadius: 16,
-    padding: 16,
-    marginTop: 4,
-  },
-  summaryLabel: { fontSize: 10.5, fontWeight: '800', letterSpacing: 1, color: PREMIUM.gold, marginBottom: 6 },
-  summaryText: { fontSize: 13, fontWeight: '700', color: PREMIUM.text, lineHeight: 19 },
-  summaryTextDim: { fontSize: 12, color: PREMIUM.textDim, marginTop: 3, lineHeight: 17 },
-
-  actions: { flexDirection: 'row', gap: 12, marginTop: 18 },
-  cancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 13,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    backgroundColor: PREMIUM.card,
-  },
-  cancelBtnText: { fontSize: 13.5, fontWeight: '700', color: PREMIUM.textDim },
-  saveBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 13,
-    borderRadius: 14,
-    backgroundColor: PREMIUM.burgundy,
-    shadowColor: PREMIUM.burgundyDark,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  saveBtnText: { fontSize: 13.5, fontWeight: '800', color: PREMIUM.cream },
-
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: PREMIUM.card,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    marginBottom: 16,
-  },
-  searchInput: { flex: 1, fontSize: 13, color: PREMIUM.text },
-  emptyText: { fontSize: 12.5, color: PREMIUM.textDim, fontStyle: 'italic', textAlign: 'center', paddingVertical: 12 },
-
-  splitRow: { flexDirection: 'row', gap: 16, flexShrink: 1 },
-  teacherCol: { flex: 1, maxHeight: 380 },
-  teacherCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    backgroundColor: PREMIUM.card,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 8,
-  },
-  teacherCardActive: { borderColor: PREMIUM.gold, backgroundColor: `${PREMIUM.gold}18` },
-  avatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: `${PREMIUM.burgundy}1A`,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { fontSize: 13, fontWeight: '800', color: PREMIUM.burgundy },
-  teacherName: { fontSize: 12.5, fontWeight: '700', color: PREMIUM.text },
-  teacherMeta: { fontSize: 10, color: PREMIUM.textFaint, marginTop: 1 },
-
-  subjectCol: { flex: 1, maxHeight: 380 },
-  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  subjectChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderWidth: 1,
-    borderColor: PREMIUM.border,
-    backgroundColor: PREMIUM.card,
-    borderRadius: 999,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
-  },
-  subjectChipOn: { borderColor: PREMIUM.burgundy, backgroundColor: PREMIUM.burgundy },
-  subjectChipText: { fontSize: 12, fontWeight: '600', color: PREMIUM.textDim },
-  subjectChipTextOn: { color: PREMIUM.cream, fontWeight: '700' },
-});
 
 /* ------------------------------ notice board ------------------------------- */
 
