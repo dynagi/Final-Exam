@@ -165,6 +165,19 @@ create table if not exists public.teacher_subjects (
   primary key (exam_id, teacher_id, subject)
 );
 
+-- A paper setter's exam-category domains. Global to the account, not
+-- exam-scoped — unlike teacher_subjects, which is per (exam, teacher). A
+-- setter picks 2 at signup (assigned_by null); an Admin can grant more later
+-- (assigned_by = the admin's id) via POST /api/accounts/:id/domains.
+create table if not exists public.setter_domains (
+  setter_id uuid not null references public.profiles (id) on delete cascade,
+  subject text not null,
+  assigned_by uuid references public.profiles (id),
+  created_at timestamptz not null default now(),
+  primary key (setter_id, subject)
+);
+create index if not exists idx_setter_domains_setter on public.setter_domains (setter_id);
+
 -- A day's exam runs in 2–3 dynamic slots, each with start/end/duration.
 create table if not exists public.exam_slots (
   id uuid primary key default gen_random_uuid(),
@@ -359,7 +372,11 @@ begin
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', 'Unnamed'),
     v_role,
-    case when v_role in ('teacher', 'paper_setter') then 'pending' else 'approved' end
+    -- Explicit casts: an untyped CASE's branches resolve to text, and
+    -- Postgres has no implicit text→enum cast, so without these every
+    -- signup fails with "column status is of type account_status but
+    -- expression is of type text".
+    case when v_role in ('teacher', 'paper_setter') then 'pending'::account_status else 'approved'::account_status end
   );
   return new;
 end;
@@ -558,6 +575,7 @@ alter table public.paper_copies enable row level security;
 alter table public.exam_centers enable row level security;
 alter table public.exam_slots enable row level security;
 alter table public.teacher_subjects enable row level security;
+alter table public.setter_domains enable row level security;
 alter table public.custody_events enable row level security;
 alter table public.alerts enable row level security;
 alter table public.qr_detections enable row level security;
@@ -590,12 +608,52 @@ create policy "teachers delete own unused questions" on public.questions
     and public.get_my_role() = 'teacher'
     and status in ('submitted', 'approved')
   );
+-- A paper setter may only read/update questions belonging to an exam in one
+-- of their granted domains (setter_domains) — an exam with no category is an
+-- unenforced/custom format, nothing to check domains against, so it stays
+-- visible. Mirrors the POST /api/papers domain check server-side.
 drop policy if exists "setters and admins read all questions" on public.questions;
-create policy "setters and admins read all questions" on public.questions
-  for select to authenticated using (public.get_my_role() in ('paper_setter', 'admin'));
+drop policy if exists "setters read questions in their domains" on public.questions;
+create policy "setters read questions in their domains" on public.questions
+  for select to authenticated using (
+    public.get_my_role() = 'admin'
+    or (
+      public.get_my_role() = 'paper_setter'
+      and exists (
+        select 1 from public.exams e
+        where e.id = questions.exam_id
+          and (
+            e.format_blueprint ->> 'category' is null
+            or exists (
+              select 1 from public.setter_domains sd
+              where sd.setter_id = auth.uid()
+                and sd.subject = e.format_blueprint ->> 'category'
+            )
+          )
+      )
+    )
+  );
 drop policy if exists "setters and admins update questions" on public.questions;
-create policy "setters and admins update questions" on public.questions
-  for update to authenticated using (public.get_my_role() in ('paper_setter', 'admin'));
+drop policy if exists "setters update questions in their domains" on public.questions;
+create policy "setters update questions in their domains" on public.questions
+  for update to authenticated using (
+    public.get_my_role() = 'admin'
+    or (
+      public.get_my_role() = 'paper_setter'
+      and exists (
+        select 1 from public.exams e
+        where e.id = questions.exam_id
+          and (
+            e.format_blueprint ->> 'category' is null
+            or exists (
+              select 1 from public.setter_domains sd
+              where sd.setter_id = auth.uid()
+                and sd.subject = e.format_blueprint ->> 'category'
+            )
+          )
+      )
+    )
+  );
 
 -- papers (status changes beyond draft happen via the Node service / service role)
 drop policy if exists "setters create drafts" on public.papers;
@@ -651,9 +709,35 @@ create policy "admins manage exams" on public.exams
   for all to authenticated
   using (public.get_my_role() = 'admin')
   with check (public.get_my_role() = 'admin' and created_by = auth.uid());
+-- Admin sees every exam; a teacher sees only exams they hold a
+-- teacher_subjects row for; a paper setter sees only exams whose category is
+-- one of their granted domains (setter_domains) — an exam with no category
+-- is an unenforced/custom format, nothing to check domains against, so it
+-- stays visible, matching the POST /api/papers rule.
 drop policy if exists "authenticated read exams" on public.exams;
-create policy "authenticated read exams" on public.exams
-  for select to authenticated using (true);
+drop policy if exists "scoped read exams" on public.exams;
+create policy "scoped read exams" on public.exams
+  for select to authenticated using (
+    public.get_my_role() = 'admin'
+    or (
+      public.get_my_role() = 'teacher'
+      and exists (
+        select 1 from public.teacher_subjects ts
+        where ts.exam_id = exams.id and ts.teacher_id = auth.uid()
+      )
+    )
+    or (
+      public.get_my_role() = 'paper_setter'
+      and (
+        exams.format_blueprint ->> 'category' is null
+        or exists (
+          select 1 from public.setter_domains sd
+          where sd.setter_id = auth.uid()
+            and sd.subject = exams.format_blueprint ->> 'category'
+        )
+      )
+    )
+  );
 
 -- teacher_subjects
 drop policy if exists "admins manage teacher subjects" on public.teacher_subjects;
@@ -665,6 +749,17 @@ drop policy if exists "read own or privileged teacher subjects" on public.teache
 create policy "read own or privileged teacher subjects" on public.teacher_subjects
   for select to authenticated
   using (teacher_id = auth.uid() or public.get_my_role() in ('admin', 'paper_setter'));
+
+-- setter_domains
+drop policy if exists "admins manage setter domains" on public.setter_domains;
+create policy "admins manage setter domains" on public.setter_domains
+  for all to authenticated
+  using (public.get_my_role() = 'admin')
+  with check (public.get_my_role() = 'admin');
+drop policy if exists "read own or privileged setter domains" on public.setter_domains;
+create policy "read own or privileged setter domains" on public.setter_domains
+  for select to authenticated
+  using (setter_id = auth.uid() or public.get_my_role() = 'admin');
 
 -- paper_copies (inserted by service role at print time; updated by custody trigger)
 drop policy if exists "admins read copies" on public.paper_copies;
@@ -729,6 +824,7 @@ alter table public.exam_centers replica identity full;
 alter table public.exam_slots replica identity full;
 alter table public.paper_copies replica identity full;
 alter table public.teacher_subjects replica identity full;
+alter table public.setter_domains replica identity full;
 alter table public.qr_detections replica identity full;
 
 do $$
@@ -774,6 +870,11 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.teacher_subjects;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.setter_domains;
 exception when duplicate_object then null;
 end $$;
 do $$

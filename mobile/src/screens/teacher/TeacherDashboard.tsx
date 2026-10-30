@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -19,14 +19,42 @@ import {
   useFitScale,
 } from '../../components/ArchiveBook';
 import { Seal } from '../../components/ArchiveControls';
+import GuideOverlay from '../../components/guide/GuideOverlay';
 import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { fetchAll } from '../../lib/db';
 import { timeAgo } from '../../lib/format';
+import { GuideStep, useDashboardGuide } from '../../lib/guide/useDashboardGuide';
 import { supabase } from '../../lib/supabase';
 import { labelFor, serif, toneFor } from '../../lib/theme';
 import { Question } from '../../lib/types';
 import { useTeacherIndex } from './useTeacherIndex';
+
+/** Real dashboard elements only — see TeacherDashboard's JSX for each target. */
+function teacherGuideSteps(sidebarMode: 'full' | 'slim' | 'overlay'): GuideStep[] {
+  return [
+    {
+      id: 'stats',
+      title: 'Your Questions',
+      description:
+        "These figures track everything you've written — the total, how many are MCQs, how many are theory, and how many are already sealed into a paper.",
+    },
+    {
+      id: 'recent',
+      title: 'Recent Questions',
+      description:
+        'Your most recently submitted questions show up here so you can keep an eye on their status.',
+    },
+    {
+      id: sidebarMode === 'overlay' ? 'navHeader' : 'navSidebar',
+      title: 'Getting Around',
+      description:
+        sidebarMode === 'overlay'
+          ? "Tap this menu icon anytime to open Upload Question (to add new questions) or My Questions (to review what you've submitted)."
+          : "Use this menu to open Upload Question (to add new questions) or My Questions (to review what you've submitted).",
+    },
+  ];
+}
 
 const SELF = 'TeacherDashboard';
 
@@ -45,6 +73,11 @@ export default function TeacherDashboard() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [indexOpen, setIndexOpen] = useState(false);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const guideSteps = useMemo(() => teacherGuideSteps(sidebarMode), [sidebarMode]);
+  const guide = useDashboardGuide('teacher', teacherId, guideSteps);
+  const guideStep = guide.step;
 
   const load = useCallback(async () => {
     if (!teacherId) return;
@@ -99,7 +132,11 @@ export default function TeacherDashboard() {
 
       <Rule ornament gap={16} />
 
-      <View style={styles.statGrid}>
+      <View
+        style={styles.statGrid}
+        ref={guide.refFor('stats')}
+        collapsable={false}
+      >
         <StatBlock label="Total" value={questions.length} caption="Questions you have written" />
         <StatBlock label="MCQ" value={mcqCount} caption="Multiple choice" tone={p.info} />
         <StatBlock
@@ -129,7 +166,11 @@ export default function TeacherDashboard() {
   );
 
   const rightPage = (
-    <View style={stacked ? undefined : styles.flex}>
+    <View
+      style={stacked ? undefined : styles.flex}
+      ref={guide.refFor('recent')}
+      collapsable={false}
+    >
       <PageTitle center size={[19, 27]}>
         Recent Questions
       </PageTitle>
@@ -202,16 +243,20 @@ export default function TeacherDashboard() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ArchiveBackground />
-      <ArchiveHeader
-        title="SECUREAI EXAM ARCHIVE"
-        shortTitle="ARCHIVE"
-        subtitle="Teacher · Volume I"
-        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
-      />
+      <View ref={guide.refFor('navHeader')} collapsable={false}>
+        <ArchiveHeader
+          title="SECUREAI EXAM ARCHIVE"
+          shortTitle="ARCHIVE"
+          subtitle="Teacher · Volume I"
+          onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+        />
+      </View>
 
       <View style={styles.body}>
         {sidebarMode === 'overlay' ? null : (
-          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+          <View ref={guide.refFor('navSidebar')} collapsable={false}>
+            <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+          </View>
         )}
 
         {/* The spread never scrolls as a page: the book is centred and fixed,
@@ -219,6 +264,7 @@ export default function TeacherDashboard() {
             scroll (and with it pull-to-refresh), where there is no option. */}
         {stacked ? (
           <ScrollView
+            ref={scrollRef}
             style={styles.flex}
             contentContainerStyle={[
               styles.scrollContent,
@@ -247,6 +293,21 @@ export default function TeacherDashboard() {
         onSelect={onSelect}
         onClose={() => setIndexOpen(false)}
       />
+
+      {guideStep ? (
+        <GuideOverlay
+          visible={guide.visible}
+          title={guideStep.title}
+          description={guideStep.description}
+          stepIndex={guide.stepIndex}
+          totalSteps={guide.totalSteps}
+          targetNode={guide.getTarget(guideStep.id)}
+          scrollRef={stacked ? scrollRef : undefined}
+          onNext={guide.next}
+          onSkip={guide.skip}
+          isLast={guide.isLast}
+        />
+      ) : null}
     </View>
   );
 }

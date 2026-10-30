@@ -35,7 +35,11 @@ begin
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', 'Unnamed'),
     v_role,
-    case when v_role in ('teacher', 'paper_setter') then 'pending' else 'approved' end
+    -- Explicit casts: an untyped CASE's branches resolve to text, and
+    -- Postgres has no implicit text→enum cast, so without these every
+    -- signup fails with "column status is of type account_status but
+    -- expression is of type text".
+    case when v_role in ('teacher', 'paper_setter') then 'pending'::account_status else 'approved'::account_status end
   );
   return new;
 end;

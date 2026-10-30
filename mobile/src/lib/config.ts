@@ -7,7 +7,10 @@
  *
  * 2. CRYPTO_SERVER_URL — where the Node crypto service runs. This is now
  *    derived automatically per platform (see below):
- *    - Web browser:             http://localhost:4000
+ *    - Web browser:             http://<whatever host served the page>:4000
+ *                               — e.g. localhost on the dev machine itself,
+ *                               or the PC's LAN IP when the page was opened
+ *                               from a phone's browser at that LAN URL.
  *    - Physical phone (Expo Go): http://<PC-LAN-IP>:4000 — auto-detected from
  *                               the Metro bundle host, no manual editing needed
  *    - Android emulator:        http://10.0.2.2:4000 (fallback)
@@ -59,10 +62,25 @@ const lanHost = Platform.OS === 'web' ? null : LAN_HOST_OVERRIDE || lanHostFromC
 // Emulator/simulator fallbacks when no LAN IP is available.
 const fallback = Platform.OS === 'ios' ? '127.0.0.1' : '10.0.2.2';
 
+/**
+ * "Web" only means "same machine as the crypto server" when the page was
+ * loaded via localhost. Opening the Metro web build's LAN URL from a phone's
+ * browser also reports Platform.OS === 'web', but the phone's own
+ * `localhost` is unreachable — window.location.hostname is whatever host
+ * actually served the page, which is correct in both cases with no
+ * configuration needed.
+ *
+ * Only read window.location on an actual web platform: some native/Hermes
+ * environments alias global.window to global itself (so `window` exists)
+ * without a `.location`, which would otherwise throw here on native.
+ */
+const webHost =
+  Platform.OS === 'web' && typeof window !== 'undefined' ? window.location?.hostname : undefined;
+
 export const CRYPTO_SERVER_URL =
   CRYPTO_SERVER_URL_OVERRIDE ||
   (Platform.OS === 'web'
-    ? `http://localhost:${CRYPTO_PORT}`
+    ? `http://${webHost ?? 'localhost'}:${CRYPTO_PORT}`
     : `http://${lanHost ?? fallback}:${CRYPTO_PORT}`);
 
 export const IS_CONFIGURED = !SUPABASE_URL.includes('YOUR-PROJECT');

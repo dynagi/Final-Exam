@@ -1024,6 +1024,17 @@ app.get('/api/exams/:id/sets', requireRole('paper_setter', 'admin'), async (req,
     const { exam, resolved } = await loadExamContext(examId);
     if (!exam) return res.status(404).json({ error: 'Exam not found' });
 
+    // Same domain gate as POST /api/papers — a setter cannot probe another
+    // domain's exam composition just by knowing its id.
+    if (req.profile.role === 'paper_setter' && resolved?.category) {
+      const domains = await assignedDomains(req.user.id);
+      if (!domains.includes(resolved.category)) {
+        return res.status(403).json({
+          error: `This exam is in "${resolved.category}", which is not one of your assigned domains.`,
+        });
+      }
+    }
+
     const labels = setLabels(exam.paper_set_count);
     const { data: papers } = await db
       .from('papers')

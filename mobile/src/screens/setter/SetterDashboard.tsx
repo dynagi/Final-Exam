@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -33,15 +33,49 @@ import {
   usePageTurn,
 } from '../../components/ArchiveBook';
 import { Seal } from '../../components/ArchiveControls';
+import GuideOverlay from '../../components/guide/GuideOverlay';
 import PaperPreview from '../../components/PaperPreview';
 import { useAuth } from '../../context/AuthContext';
 import { CompositionReport } from '../../lib/examFormats';
+import { GuideStep, useDashboardGuide } from '../../lib/guide/useDashboardGuide';
 import { fetchExamSets, previewPaper } from '../../lib/api';
 import { supabase } from '../../lib/supabase';
 import { serif } from '../../lib/theme';
 import { ExamSetSummary, Paper, PaperView } from '../../lib/types';
 import { useScheduledExams } from '../../lib/useExams';
 import { useSetterIndex } from './useSetterIndex';
+
+/** Real dashboard elements only — see SetterDashboard's JSX for each target. */
+function setterGuideSteps(sidebarMode: 'full' | 'slim' | 'overlay'): GuideStep[] {
+  return [
+    {
+      id: 'stats',
+      title: 'Your Workspace',
+      description:
+        'These track the shared question bank, your drafts in progress, papers sealed and awaiting the admin\'s co-signature, and fully dual-sealed sets.',
+    },
+    {
+      id: 'recent',
+      title: 'Recent Activity',
+      description:
+        "Your most recently touched papers appear here with their current status, so you can pick up where you left off.",
+    },
+    {
+      id: 'examnav',
+      title: 'Switch Examinations',
+      description:
+        "Use these arrows to move between the examinations you're allowed to set papers for — only exams in your granted domains appear here.",
+    },
+    {
+      id: sidebarMode === 'overlay' ? 'navHeader' : 'navSidebar',
+      title: 'Getting Around',
+      description:
+        sidebarMode === 'overlay'
+          ? 'Tap this menu icon anytime to open the Question Pool, Compose a paper, or review My Papers.'
+          : 'Use this menu to open the Question Pool, Compose a paper, or review My Papers.',
+    },
+  ];
+}
 
 /** This screen's own route name, used to mark the active index entry. */
 const SELF = 'SetterDashboard';
@@ -76,6 +110,11 @@ export default function SetterDashboard() {
   const [poolCount, setPoolCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const [indexOpen, setIndexOpen] = useState(false);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const guideSteps = useMemo(() => setterGuideSteps(sidebarMode), [sidebarMode]);
+  const guide = useDashboardGuide('paper_setter', setterId, guideSteps);
+  const guideStep = guide.step;
 
   // Which exam ("paper") and which of its sets the right-hand page is showing.
   const [examIdx, setExamIdx] = useState(0);
@@ -249,7 +288,11 @@ export default function SetterDashboard() {
       <PageTitle eyebrow={profile?.full_name ?? 'Paper Setter'}>Dashboard</PageTitle>
       <Rule ornament gap={16} />
 
-      <View style={styles.statGrid}>
+      <View
+        style={styles.statGrid}
+        ref={guide.refFor('stats')}
+        collapsable={false}
+      >
         <StatBlock
           label="Question Bank"
           value={poolCount}
@@ -273,32 +316,34 @@ export default function SetterDashboard() {
 
       <Rule gap={18} />
 
-      <SectionHeading>Recent activity</SectionHeading>
-      {papers.length === 0 ? (
-        <Text style={styles.emptyText}>
-          No papers yet. Open Compose to assemble your first paper from the question pool.
-        </Text>
-      ) : (
-        <View style={styles.paperList}>
-          {papers.slice(0, 5).map((paper) => (
-            <View key={paper.id} style={styles.paperRow}>
-              <View style={styles.flex}>
-                <Text
-                  style={[styles.paperRowTitle, { fontSize: fluid(pageWidth, 13, 15) }]}
-                  numberOfLines={1}
-                >
-                  {paper.title}
-                </Text>
-                <Text style={styles.paperRowMeta} numberOfLines={1}>
-                  {paper.subject}
-                  {paper.set_label ? ` · ${paper.set_label}` : ''} · {paper.question_count} questions
-                </Text>
+      <View ref={guide.refFor('recent')} collapsable={false}>
+        <SectionHeading>Recent activity</SectionHeading>
+        {papers.length === 0 ? (
+          <Text style={styles.emptyText}>
+            No papers yet. Open Compose to assemble your first paper from the question pool.
+          </Text>
+        ) : (
+          <View style={styles.paperList}>
+            {papers.slice(0, 5).map((paper) => (
+              <View key={paper.id} style={styles.paperRow}>
+                <View style={styles.flex}>
+                  <Text
+                    style={[styles.paperRowTitle, { fontSize: fluid(pageWidth, 13, 15) }]}
+                    numberOfLines={1}
+                  >
+                    {paper.title}
+                  </Text>
+                  <Text style={styles.paperRowMeta} numberOfLines={1}>
+                    {paper.subject}
+                    {paper.set_label ? ` · ${paper.set_label}` : ''} · {paper.question_count} questions
+                  </Text>
+                </View>
+                <Seal label={statusWord(paper.status)} tone={toneForPaper(paper.status, p)} />
               </View>
-              <Seal label={statusWord(paper.status)} tone={toneForPaper(paper.status, p)} />
-            </View>
-          ))}
-        </View>
-      )}
+            ))}
+          </View>
+        )}
+      </View>
     </PageScroll>
   );
 
@@ -316,7 +361,11 @@ export default function SetterDashboard() {
           </View>
         ) : (
           <>
-            <View style={styles.navRow}>
+            <View
+              style={styles.navRow}
+              ref={guide.refFor('examnav')}
+              collapsable={false}
+            >
               <TurnButton
                 direction="prev"
                 label="Previous examination"
@@ -429,18 +478,23 @@ export default function SetterDashboard() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ArchiveBackground />
-      <ArchiveHeader
-        title="SECUREAI EXAM ARCHIVE"
-        shortTitle="ARCHIVE"
-        subtitle="Paper Setter · Volume I"
-        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
-      />
+      <View ref={guide.refFor('navHeader')} collapsable={false}>
+        <ArchiveHeader
+          title="SECUREAI EXAM ARCHIVE"
+          shortTitle="ARCHIVE"
+          subtitle="Paper Setter · Volume I"
+          onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+        />
+      </View>
 
       <View style={styles.body}>
         {sidebarMode === 'overlay' ? null : (
-          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelectIndex} />
+          <View ref={guide.refFor('navSidebar')} collapsable={false}>
+            <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelectIndex} />
+          </View>
         )}
         <ScrollView
+          ref={scrollRef}
           style={styles.flex}
           contentContainerStyle={[
             styles.scrollContent,
@@ -492,6 +546,21 @@ export default function SetterDashboard() {
           <Ionicons name="alert-circle-outline" size={16} color="#fff" />
           <Text style={styles.previewErrorText}>{previewError}</Text>
         </Pressable>
+      ) : null}
+
+      {guideStep ? (
+        <GuideOverlay
+          visible={guide.visible}
+          title={guideStep.title}
+          description={guideStep.description}
+          stepIndex={guide.stepIndex}
+          totalSteps={guide.totalSteps}
+          targetNode={guide.getTarget(guideStep.id)}
+          scrollRef={scrollRef}
+          onNext={guide.next}
+          onSkip={guide.skip}
+          isLast={guide.isLast}
+        />
       ) : null}
     </View>
   );

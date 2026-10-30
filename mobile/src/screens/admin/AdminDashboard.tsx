@@ -28,8 +28,11 @@ import {
   useReducedMotion,
 } from '../../components/ArchiveBook';
 import { Seal } from '../../components/ArchiveControls';
+import GuideOverlay from '../../components/guide/GuideOverlay';
+import { useAuth } from '../../context/AuthContext';
 import { useTheme } from '../../context/ThemeContext';
 import { timeAgo } from '../../lib/format';
+import { GuideStep, useDashboardGuide } from '../../lib/guide/useDashboardGuide';
 import { supabase } from '../../lib/supabase';
 import { serif, toneFor } from '../../lib/theme';
 import { AlertRow } from '../../lib/types';
@@ -37,7 +40,39 @@ import { useAdminIndex } from './useAdminIndex';
 
 const SELF = 'AdminDashboard';
 
+/** Real dashboard elements only — see AdminDashboard's JSX for each target. */
+function adminGuideSteps(sidebarMode: 'full' | 'slim' | 'overlay'): GuideStep[] {
+  return [
+    {
+      id: 'stats',
+      title: 'Security at a Glance',
+      description:
+        'These figures track papers awaiting a co-signature, fully dual-sealed sets, copies being tracked, and currently open alerts.',
+    },
+    {
+      id: 'refresh',
+      title: 'Live Alerts',
+      description: 'Tap here anytime to pull the latest alert feed on demand.',
+    },
+    {
+      id: 'alerts',
+      title: 'Alert Feed',
+      description:
+        'New security alerts appear here in real time — critical ones need your attention first. Use Acknowledge once you\'ve handled one.',
+    },
+    {
+      id: sidebarMode === 'overlay' ? 'navHeader' : 'navSidebar',
+      title: 'Getting Around',
+      description:
+        sidebarMode === 'overlay'
+          ? 'Tap this menu icon anytime to reach Approvals, Papers, Exams, Centers, Custody, Detections and the Audit log.'
+          : 'Use this menu to reach Approvals, Papers, Exams, Centers, Custody, Detections and the Audit log.',
+    },
+  ];
+}
+
 export default function AdminDashboard() {
+  const { profile } = useAuth();
   const { colors } = useTheme();
   const p = useArchivePalette();
   const { stacked, outerPad, sidebarMode, pageWidth } = useArchiveLayout();
@@ -49,6 +84,11 @@ export default function AdminDashboard() {
   const [stats, setStats] = useState({ awaiting: 0, ready: 0, copies: 0, openAlerts: 0 });
   const [refreshing, setRefreshing] = useState(false);
   const [indexOpen, setIndexOpen] = useState(false);
+
+  const scrollRef = useRef<ScrollView>(null);
+  const guideSteps = useMemo(() => adminGuideSteps(sidebarMode), [sidebarMode]);
+  const guide = useDashboardGuide('admin', profile?.id, guideSteps);
+  const guideStep = guide.step;
 
   const load = useCallback(async () => {
     const [alertRows, awaiting, ready, copies, openAlerts] = await Promise.all([
@@ -125,7 +165,11 @@ export default function AdminDashboard() {
 
       {/* The four figures are distributed over the whole leaf rather than
           bunched at the top, so the page reads as a printed summary. */}
-      <View style={styles.statGrid}>
+      <View
+        style={styles.statGrid}
+        ref={guide.refFor('stats')}
+        collapsable={false}
+      >
         <View style={styles.statRow}>
           <SecurityStat
             label="Awaiting Co-sign"
@@ -177,7 +221,11 @@ export default function AdminDashboard() {
         <PageTitle center size={[17, 24]}>
           Live Alert Feed
         </PageTitle>
-        <View style={styles.livePill}>
+        <View
+          style={styles.livePill}
+          ref={guide.refFor('refresh')}
+          collapsable={false}
+        >
           <LivePulse palette={p} />
           <Text style={styles.liveText}>Live</Text>
           <Pressable
@@ -194,28 +242,34 @@ export default function AdminDashboard() {
       <Rule ornament gap={11} />
 
       {/* Only this list scrolls — the book itself stays put. */}
-      <FeedScroll stacked={stacked}>
-        {alerts.length === 0 ? (
-          <View style={[styles.allClear, { borderColor: p.rule, backgroundColor: `${p.pageShade}99` }]}>
-            <Ionicons name="checkmark-circle" size={20} color={p.success} />
-            <Text style={styles.allClearText}>
-              All clear. Alerts stream here instantly — try reporting a copy missing from the
-              Custody page to see it live.
-            </Text>
-          </View>
-        ) : (
-          alerts.map((alert) => (
-            <AlertEntry
-              key={alert.id}
-              alert={alert}
-              palette={p}
-              tone={toneFor(colors, alert.severity)}
-              pageWidth={pageWidth}
-              onAcknowledge={() => void acknowledge(alert)}
-            />
-          ))
-        )}
-      </FeedScroll>
+      <View
+        style={stacked ? undefined : styles.flex}
+        ref={guide.refFor('alerts')}
+        collapsable={false}
+      >
+        <FeedScroll stacked={stacked}>
+          {alerts.length === 0 ? (
+            <View style={[styles.allClear, { borderColor: p.rule, backgroundColor: `${p.pageShade}99` }]}>
+              <Ionicons name="checkmark-circle" size={20} color={p.success} />
+              <Text style={styles.allClearText}>
+                All clear. Alerts stream here instantly — try reporting a copy missing from the
+                Custody page to see it live.
+              </Text>
+            </View>
+          ) : (
+            alerts.map((alert) => (
+              <AlertEntry
+                key={alert.id}
+                alert={alert}
+                palette={p}
+                tone={toneFor(colors, alert.severity)}
+                pageWidth={pageWidth}
+                onAcknowledge={() => void acknowledge(alert)}
+              />
+            ))
+          )}
+        </FeedScroll>
+      </View>
     </View>
   );
 
@@ -232,20 +286,25 @@ export default function AdminDashboard() {
   return (
     <View style={[styles.screen, { paddingTop: insets.top }]}>
       <ArchiveBackground />
-      <ArchiveHeader
-        title="SECUREAI EXAM ARCHIVE"
-        shortTitle="ARCHIVE"
-        subtitle="Admin · Command Centre"
-        onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
-      />
+      <View ref={guide.refFor('navHeader')} collapsable={false}>
+        <ArchiveHeader
+          title="SECUREAI EXAM ARCHIVE"
+          shortTitle="ARCHIVE"
+          subtitle="Admin · Command Centre"
+          onMenu={sidebarMode === 'overlay' ? () => setIndexOpen(true) : undefined}
+        />
+      </View>
 
       <View style={styles.body}>
         {sidebarMode === 'overlay' ? null : (
-          <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+          <View ref={guide.refFor('navSidebar')} collapsable={false}>
+            <ArchiveSidebar items={items} activeRoute={SELF} onSelect={onSelect} />
+          </View>
         )}
 
         {stacked ? (
           <ScrollView
+            ref={scrollRef}
             style={styles.flex}
             contentContainerStyle={[
               styles.scrollContent,
@@ -274,6 +333,21 @@ export default function AdminDashboard() {
         onSelect={onSelect}
         onClose={() => setIndexOpen(false)}
       />
+
+      {guideStep ? (
+        <GuideOverlay
+          visible={guide.visible}
+          title={guideStep.title}
+          description={guideStep.description}
+          stepIndex={guide.stepIndex}
+          totalSteps={guide.totalSteps}
+          targetNode={guide.getTarget(guideStep.id)}
+          scrollRef={stacked ? scrollRef : undefined}
+          onNext={guide.next}
+          onSkip={guide.skip}
+          isLast={guide.isLast}
+        />
+      ) : null}
     </View>
   );
 }
